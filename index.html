@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DASH PHOTO STUDIO</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red:      #C8102E;
+      --bg:       #E2E2E2;
+      --white:    #FFFFFF;
+      --dark:     #1A1A1A;
+      --gray:     #888888;
+      --gray-lt:  #F5F5F5;
+      --border:   #E0E0E0;
+      --radius:   18px;
+      --panel-w:  420px;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--dark);
+    }
+
+    /* ── Screens ─────────────────────────────────── */
+    .screen {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      width: 100%;
+    }
+    .screen.active { display: flex; }
+
+    /* ── Shared header ───────────────────────────── */
+    .top-bar {
+      width: 100%;
+      display: flex;
+      justify-content: flex-end;
+      padding: 18px 24px 0;
+      position: relative;
+      z-index: 20;
+    }
+
+    .lang-toggle {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      background: rgba(255,255,255,0.6);
+      border-radius: 20px;
+      padding: 3px 4px;
+      backdrop-filter: blur(4px);
+    }
+    .lang-btn {
+      font-size: 11px; font-weight: 700;
+      border: none; cursor: pointer;
+      padding: 4px 10px; border-radius: 16px;
+      font-family: 'Inter', sans-serif;
+      transition: background 0.15s, color 0.15s;
+      background: transparent; color: #666;
+      letter-spacing: 0.04em;
+    }
+    .lang-btn.on { background: var(--dark); color: #fff; }
+
+    .site-header {
+      text-align: center;
+      padding: 14px 20px 0;
+      position: relative; z-index: 10;
+    }
+    .site-title {
+      font-size: 26px; font-weight: 800;
+      color: var(--red); letter-spacing: 0.14em;
+      text-transform: uppercase; line-height: 1;
+    }
+    .site-sub {
+      font-size: 12px; font-weight: 400;
+      color: var(--gray); margin-top: 5px;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Footer ──────────────────────────────────── */
+    .footer {
+      font-size: 11px; color: #aaa;
+      text-align: center; padding: 16px 20px;
+      position: relative; z-index: 10;
+      margin-top: auto;
+    }
+    .footer b { color: var(--red); font-weight: 700; }
+
+    /* ════════════════════════════════════════════════
+       01  INDEX
+    ═══════════════════════════════════════════════ */
+    #idx { background: var(--bg); }
+
+    .idx-body {
+      display: flex; flex-direction: column;
+      align-items: center;
+      padding: 24px 20px 0;
+      width: 100%; max-width: 460px;
+    }
+
+    /* Speech bubble */
+    .bubble-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      padding: 24px 26px 22px;
+      width: 100%;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      position: relative;
+    }
+    /* tail pointing down toward the robot */
+    .bubble-card::after {
+      content: '';
+      position: absolute;
+      bottom: -13px; left: 50%;
+      transform: translateX(-50%);
+      border-left: 13px solid transparent;
+      border-right: 13px solid transparent;
+      border-top: 13px solid var(--white);
+      filter: drop-shadow(0 3px 3px rgba(0,0,0,0.05));
+    }
+
+    .bubble-text {
+      font-size: 14px; line-height: 1.7; color: var(--dark);
+    }
+    .bubble-text .em { color: var(--red); font-weight: 600; }
+
+    .btn-start {
+      display: block; margin: 20px auto 0;
+      background: var(--red); color: #fff;
+      border: none; border-radius: 24px;
+      padding: 12px 44px;
+      font-size: 14px; font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      cursor: pointer; letter-spacing: 0.02em;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn-start:hover { opacity: 0.88; transform: translateY(-1px); }
+
+    /* Robot on index */
+    .idx-robot {
+      width: 180px; height: auto;
+      margin-top: 20px;
+      display: block;
+    }
+
+    /* ════════════════════════════════════════════════
+       02  CHAT (Step 1+)
+    ═══════════════════════════════════════════════ */
+    #chat { position: relative; }
+
+    /* Studio BG */
+    .studio-bg {
+      position: fixed; inset: 0; z-index: 0;
+      background: #DADADA;
+      display: flex; align-items: stretch;
+      overflow: hidden;
+    }
+    /* SVG Studio lights (left & right) */
+    .studio-side {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .studio-side svg { width: 100%; max-width: 240px; height: auto; opacity: 0.9; }
+
+    /* Chat layout */
+    .chat-wrap {
+      position: relative; z-index: 10;
+      display: flex; flex-direction: column;
+      align-items: center; width: 100%;
+      flex: 1; padding: 0 16px 16px;
+    }
+
+    /* Chat panel */
+    .chat-panel {
+      width: 100%; max-width: var(--panel-w);
+      background: var(--white);
+      border-radius: 20px;
+      display: flex; flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      max-height: calc(100vh - 220px);
+      box-shadow: 0 6px 36px rgba(0,0,0,0.14);
+      overflow: hidden;
+    }
+
+    /* Messages */
+    .msg-list {
+      flex: 1; overflow-y: auto;
+      padding: 20px 16px 12px;
+      display: flex; flex-direction: column; gap: 14px;
+      scroll-behavior: smooth;
+    }
+    .msg-list::-webkit-scrollbar { width: 3px; }
+    .msg-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.08); border-radius: 2px; }
+
+    .msg-row {
+      display: flex; align-items: flex-start; gap: 10px;
+      animation: msgIn 0.22s ease-out;
+    }
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .msg-row.user { flex-direction: row-reverse; }
+
+    /* Agent avatar */
+    .avatar {
+      width: 42px; height: 42px; border-radius: 50%;
+      overflow: hidden; flex-shrink: 0;
+      background: #f0f0f0;
+      border: 2px solid #eee;
+    }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .avatar.ghost { visibility: hidden; }
+
+    /* Bubble */
+    .msg-bub {
+      max-width: 76%;
+      padding: 12px 15px;
+      border-radius: 16px;
+      font-size: 13.5px; line-height: 1.65;
+    }
+    .msg-row.agent .msg-bub {
+      background: var(--gray-lt);
+      color: var(--dark);
+      border-top-left-radius: 4px;
+    }
+    .msg-row.user .msg-bub {
+      background: var(--dark);
+      color: #fff;
+      border-top-right-radius: 4px;
+    }
+    .msg-bub .em { color: var(--red); font-weight: 600; }
+
+    /* Typing dots */
+    .typing-bub {
+      background: var(--gray-lt);
+      border-radius: 16px; border-top-left-radius: 4px;
+      padding: 13px 16px;
+      display: flex; gap: 5px; align-items: center;
+    }
+    .tdot {
+      width: 6px; height: 6px; border-radius: 50%; background: #bbb;
+      animation: td 1.1s ease-in-out infinite;
+    }
+    .tdot:nth-child(2) { animation-delay: 0.18s; }
+    .tdot:nth-child(3) { animation-delay: 0.36s; }
+    @keyframes td {
+      0%,80%,100% { transform: scale(1); background: #ccc; }
+      40% { transform: scale(1.4); background: var(--red); }
+    }
+
+    /* ── Option cards (image grid / region / ratio) ── */
+    .opt-section { margin-top: 10px; }
+    .opt-label {
+      font-size: 10px; font-weight: 700; color: #999;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      margin-bottom: 7px;
+    }
+
+    /* Image grid */
+    .img-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px;
+    }
+    .img-card {
+      border-radius: 10px; overflow: hidden;
+      cursor: pointer; border: 2px solid transparent;
+      transition: border-color 0.15s, transform 0.12s;
+      position: relative; background: #f0f0f0;
+    }
+    .img-card:hover { transform: scale(1.03); }
+    .img-card.sel { border-color: var(--red); }
+    .img-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+    .img-card .img-badge {
+      position: absolute; top: 5px; left: 5px;
+      background: var(--red); color: #fff;
+      font-size: 9px; font-weight: 700;
+      padding: 2px 6px; border-radius: 8px;
+    }
+    .img-card .img-score {
+      font-size: 10px; color: #666;
+      text-align: center; padding: 4px 4px 3px;
+      background: rgba(255,255,255,0.85);
+    }
+
+    /* Region / Ratio selectors */
+    .sel-grid {
+      display: grid; gap: 6px;
+    }
+    .sel-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .sel-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+    .sel-card {
+      border-radius: 10px; border: 1.5px solid var(--border);
+      background: #fafafa; padding: 10px 6px;
+      text-align: center; cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .sel-card:hover { border-color: rgba(200,16,46,0.4); background: rgba(200,16,46,0.04); }
+    .sel-card.sel  { border-color: var(--red); background: rgba(200,16,46,0.06); }
+    .sel-card .sc-icon { font-size: 18px; margin-bottom: 3px; }
+    .sel-card .sc-label { font-size: 11px; font-weight: 600; color: var(--dark); }
+    .sel-card .sc-sub { font-size: 10px; color: #999; margin-top: 1px; }
+
+    /* Prompt preview */
+    .prompt-wrap {
+      margin-top: 10px;
+      border: 1.5px solid rgba(200,16,46,0.25);
+      border-radius: 10px; overflow: hidden;
+      background: rgba(200,16,46,0.04);
+    }
+    .prompt-head {
+      font-size: 10px; font-weight: 700; color: var(--red);
+      padding: 7px 12px 3px;
+      text-transform: uppercase; letter-spacing: 0.07em;
+    }
+    .prompt-ta {
+      width: 100%; border: none; outline: none; resize: none;
+      background: transparent; padding: 0 12px 10px;
+      font-size: 11.5px; color: #555; line-height: 1.6;
+      font-family: 'Inter', sans-serif; min-height: 72px;
+    }
+
+    /* Progress steps */
+    .progress { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+    .pstep { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #aaa; }
+    .pstep.on  { color: var(--red); font-weight: 500; }
+    .pstep.done { color: #22c55e; }
+    .pstep-ico { width: 15px; text-align: center; flex-shrink: 0; }
+    .pspin {
+      width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0;
+      border: 2px solid rgba(200,16,46,0.25); border-top-color: var(--red);
+      animation: pspin 0.65s linear infinite;
+    }
+    @keyframes pspin { to { transform: rotate(360deg); } }
+
+    /* Result image */
+    .result-img {
+      width: 100%; border-radius: 12px;
+      display: block; margin-top: 10px;
+      box-shadow: 0 3px 14px rgba(0,0,0,0.1);
+    }
+
+    /* QC section */
+    .qc-wrap { margin-top: 12px; }
+    .qc-title { font-size: 10px; font-weight: 700; color: #bbb; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 6px; }
+    .qc-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .qc-name { font-size: 11px; color: #666; width: 100px; flex-shrink: 0; }
+    .qc-track { flex: 1; height: 5px; background: #f0e0e0; border-radius: 3px; overflow: hidden; }
+    .qc-fill  { height: 100%; background: linear-gradient(90deg, var(--red), #e85c7a); border-radius: 3px; }
+    .qc-val   { font-size: 11px; font-weight: 600; color: var(--red); width: 28px; text-align: right; }
+
+    /* Revision chips */
+    .rev-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .rev-chip {
+      padding: 6px 13px; border-radius: 16px;
+      border: 1px solid rgba(200,16,46,0.3);
+      background: rgba(200,16,46,0.05); color: var(--red);
+      font-size: 11.5px; font-weight: 500; cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      transition: background 0.12s;
+    }
+    .rev-chip:hover { background: rgba(200,16,46,0.12); }
+
+    /* Action buttons */
+    .act-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .act-btn {
+      padding: 9px 18px; border-radius: 20px; border: none;
+      font-size: 12px; font-weight: 600; cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .act-btn:hover { opacity: 0.85; transform: translateY(-1px); }
+    .act-btn.primary { background: var(--red); color: #fff; }
+    .act-btn.outline {
+      background: transparent; color: var(--red);
+      border: 1.5px solid rgba(200,16,46,0.35);
+    }
+    .act-btn.ghost {
+      background: #f0f0f0; color: #555;
+    }
+    .act-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+    .rev-remain { font-size: 11px; color: #aaa; align-self: center; }
+
+    /* ── Input bar ───────────────────────────────── */
+    .input-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 14px;
+      border-top: 1px solid #f0f0f0;
+      background: var(--white);
+    }
+    .inp-field {
+      flex: 1; border: 1.5px solid var(--border);
+      border-radius: 24px; padding: 10px 16px;
+      font-size: 13px; color: var(--dark);
+      font-family: 'Inter', sans-serif; outline: none;
+      background: #FAFAFA; transition: border-color 0.15s;
+    }
+    .inp-field:focus { border-color: var(--red); }
+    .inp-field::placeholder { color: #BBBBBB; }
+    .send-btn {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--red); border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: opacity 0.15s, transform 0.1s;
+    }
+    .send-btn:hover { opacity: 0.85; transform: scale(1.06); }
+    .send-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+
+    /* History strip */
+    .hist-strip {
+      width: 100%; max-width: var(--panel-w);
+      display: none; gap: 8px; margin-bottom: 8px;
+      overflow-x: auto; padding-bottom: 2px;
+    }
+    .hist-strip.show { display: flex; }
+    .hist-strip::-webkit-scrollbar { height: 3px; }
+    .hist-thumb {
+      flex-shrink: 0; width: 52px; height: 52px;
+      border-radius: 8px; overflow: hidden;
+      border: 2px solid transparent; cursor: pointer;
+      transition: border-color 0.15s, transform 0.12s;
+      position: relative;
+    }
+    .hist-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .hist-thumb.on { border-color: var(--red); }
+    .hist-thumb:hover { transform: scale(1.07); }
+    .hist-n {
+      position: absolute; bottom: 2px; right: 2px;
+      background: rgba(0,0,0,0.5); color: #fff;
+      font-size: 9px; font-weight: 700;
+      border-radius: 4px; padding: 1px 4px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════
+     01  INDEX
+═══════════════════════════════════════ -->
+<div class="screen active" id="idx">
+
+  <div class="top-bar">
+    <div class="lang-toggle">
+      <button class="lang-btn on" id="ko1" onclick="setLang('ko')">KO</button>
+      <button class="lang-btn"    id="en1" onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+
+  <div class="site-header">
+    <div class="site-title">DASH PHOTO STUDIO</div>
+    <div class="site-sub">Lifestyle Image Agent</div>
+  </div>
+
+  <div class="idx-body">
+    <div class="bubble-card">
+      <p class="bubble-text" id="idx-msg">
+        안녕하세요. <span class="em">DASH Photographer</span> 입니다.<br>
+        LG.COM 제품 라이프스타일을 만들어보세요.<br>
+        원하는 이미지를 손쉽게 만들 수 있도록 도와드릴게요.
+      </p>
+      <button class="btn-start" id="btn-start" onclick="goChat()">시작하기</button>
+    </div>
+
+    <img class="idx-robot" src="assets/robot.png" alt="DASH robot" />
+  </div>
+
+  <div class="footer"><b>DASH FLOW</b> empowers HSAD teams to build and design their own agents.</div>
+</div>
+
+
+<!-- ════════════════════════════════════
+     02  CHAT
+═══════════════════════════════════════ -->
+<div class="screen" id="chat">
+
+  <!-- Studio background -->
+  <div class="studio-bg" aria-hidden="true">
+    <div class="studio-side"><!-- Left softbox -->
+      <svg viewBox="0 0 200 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- stand -->
+        <rect x="95" y="200" width="10" height="240" rx="4" fill="#333"/>
+        <polygon points="80,440 120,440 130,480 70,480" fill="#222"/>
+        <polygon points="60,480 140,480 155,500 45,500" fill="#222"/>
+        <!-- arm -->
+        <rect x="100" y="155" width="60" height="8" rx="4" fill="#444" transform="rotate(-20 100 155)"/>
+        <!-- softbox body -->
+        <rect x="105" y="60" width="90" height="115" rx="10" fill="#CCCCCC"/>
+        <rect x="108" y="63" width="84" height="109" rx="8" fill="#F0F0F0"/>
+        <!-- diffuser panel (bright) -->
+        <rect x="111" y="66" width="78" height="103" rx="6" fill="white" opacity="0.95"/>
+        <!-- subtle gradient on softbox face -->
+        <rect x="111" y="66" width="78" height="103" rx="6" fill="url(#gleft)" opacity="0.3"/>
+        <defs>
+          <radialGradient id="gleft" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="white" stop-opacity="1"/>
+            <stop offset="100%" stop-color="white" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <!-- frame edges -->
+        <rect x="105" y="60" width="90" height="115" rx="10" stroke="#AAAAAA" stroke-width="2" fill="none"/>
+      </svg>
+    </div>
+    <div class="studio-side" style="justify-content:flex-end"><!-- Right softbox (mirrored) -->
+      <svg viewBox="0 0 200 480" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:scaleX(-1)">
+        <rect x="95" y="200" width="10" height="240" rx="4" fill="#333"/>
+        <polygon points="80,440 120,440 130,480 70,480" fill="#222"/>
+        <polygon points="60,480 140,480 155,500 45,500" fill="#222"/>
+        <rect x="100" y="155" width="60" height="8" rx="4" fill="#444" transform="rotate(-20 100 155)"/>
+        <rect x="105" y="60" width="90" height="115" rx="10" fill="#CCCCCC"/>
+        <rect x="108" y="63" width="84" height="109" rx="8" fill="#F0F0F0"/>
+        <rect x="111" y="66" width="78" height="103" rx="6" fill="white" opacity="0.95"/>
+        <rect x="111" y="66" width="78" height="103" rx="6" fill="url(#gright)" opacity="0.3"/>
+        <defs>
+          <radialGradient id="gright" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="white" stop-opacity="1"/>
+            <stop offset="100%" stop-color="white" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <rect x="105" y="60" width="90" height="115" rx="10" stroke="#AAAAAA" stroke-width="2" fill="none"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Chat UI overlay -->
+  <div class="top-bar" style="position:relative;z-index:20">
+    <div class="lang-toggle">
+      <button class="lang-btn on" id="ko2" onclick="setLang('ko')">KO</button>
+      <button class="lang-btn"    id="en2" onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+
+  <div class="site-header" style="position:relative;z-index:10">
+    <div class="site-title">DASH PHOTO STUDIO</div>
+    <div class="site-sub">Lifestyle Image Agent</div>
+  </div>
+
+  <div class="chat-wrap">
+
+    <!-- Version history thumbnails -->
+    <div class="hist-strip" id="histStrip"></div>
+
+    <!-- Chat panel -->
+    <div class="chat-panel">
+      <div class="msg-list" id="msgList"></div>
+      <div class="input-bar">
+        <input class="inp-field" id="inp" type="text"
+               placeholder="Enter PDP URL ..."
+               onkeydown="if(event.key==='Enter') handleSend()" />
+        <button class="send-btn" id="sendBtn" onclick="handleSend()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M14 2L7 9M14 2L9.5 14 7 9 2 6.5 14 2Z"
+                  stroke="white" stroke-width="1.8"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer" style="position:relative;z-index:10">
+    <b>DASH FLOW</b> empowers HSAD teams to build and design their own agents.
+  </div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
