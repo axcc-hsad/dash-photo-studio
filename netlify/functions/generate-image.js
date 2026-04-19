@@ -1,16 +1,10 @@
 // ─────────────────────────────────────────────────────────────
 //  generate-image.js  —  Netlify Function
-//  POST { productImageUrl, productType, region, ratio, prompt }
+//  POST { productType, region, ratio, prompt }
 //  →  { imageUrl, qcScores }
-//  Uses Google Imagen 3 for generation + Gemini Flash for QC
+//  Uses Gemini 2.0 Flash image generation (AI Studio free tier)
 // ─────────────────────────────────────────────────────────────
 import { GoogleGenAI } from '@google/genai';
-
-const ASPECT = {
-  square:    '1:1',
-  landscape: '16:9',
-  portrait:  '4:5',
-};
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') return cors204();
@@ -28,53 +22,58 @@ export async function handler(event) {
   try {
     const ai = new GoogleGenAI({ apiKey });
 
-    // ── 1. Generate image via Imagen 3 ───────────────────────
-    const imgRes = await ai.models.generateImages({
-      model: 'imagen-3.0-generate-001',
-      prompt,
+    // ── 1. Generate image via Gemini 2.0 Flash ───────────────
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-exp-image-generation',
+      contents: prompt,
       config: {
-        numberOfImages: 1,
-        aspectRatio: ASPECT[ratio] || '1:1',
-        outputMimeType: 'image/jpeg',
-        personGeneration: 'dont_allow',
+        responseModalities: ['TEXT', 'IMAGE'],
       },
     });
 
-    const base64 = imgRes.generatedImages[0].image.imageBytes;
-    const imageUrl = `data:image/jpeg;base64,${base64}`;
+    // Extract base64 image from response parts
+    let imageUrl = null;
+    const parts = result.candidates?.[0]?.content?.parts ?? [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        const mime = part.inlineData.mimeType || 'image/jpeg';
+        imageUrl = `data:${mime};base64,${part.inlineData.data}`;
+        break;
+      }
+    }
+
+    if (!imageUrl) return err(500, 'No image returned from Gemini');
 
     // ── 2. QC via Gemini Flash vision ────────────────────────
     let qcScores = { productIntegrity: 88, naturalProportions: 85, backgroundHarmony: 87, regionalStyleMatch: 83 };
     try {
-      qcScores = await runQC(ai, base64, productType, region);
+      const base64 = imageUrl.split(',')[1];
+      const mime   = imageUrl.split(';')[0].split(':')[1];
+      qcScores = await runQC(ai, base64, mime, productType, region);
     } catch (qcErr) {
       console.warn('QC skipped:', qcErr.message);
     }
 
     return ok({ imageUrl, qcScores });
+
   } catch (e) {
     console.error('generate-image error:', e);
     return err(500, e.message);
   }
 }
 
-async function runQC(ai, base64, productType, region) {
+async function runQC(ai, base64, mime, productType, region) {
   const res = await ai.models.generateContent({
     model: 'gemini-2.0-flash',
     contents: [
-      {
-        inlineData: { mimeType: 'image/jpeg', data: base64 },
-      },
-      {
-        text: `You are a lifestyle image QC expert. Evaluate this AI-generated lifestyle image for an LG ${productType}.
-Score each dimension from 0-100 as a JSON object:
-- productIntegrity: Is the product clearly visible and undistorted?
-- naturalProportions: Does the scene look natural and well-composed?
-- backgroundHarmony: Does the background complement the product?
-- regionalStyleMatch: Does the setting match the ${region} regional style?
-
-Return ONLY valid JSON, e.g.: {"productIntegrity":90,"naturalProportions":85,"backgroundHarmony":88,"regionalStyleMatch":82}`,
-      },
+      { inlineData: { mimeType: mime, data: base64 } },
+      { text: `You are a lifestyle image QC expert. Evaluate this AI-generated lifestyle photo for an LG ${productType}.
+Score each from 0–100 as JSON:
+- productIntegrity: product clearly visible and undistorted?
+- naturalProportions: scene looks natural and well-composed?
+- backgroundHarmony: background complements the product?
+- regionalStyleMatch: setting matches ${region} regional style?
+Return ONLY JSON: {"productIntegrity":90,"naturalProportions":85,"backgroundHarmony":88,"regionalStyleMatch":82}` },
     ],
   });
 
@@ -90,6 +89,6 @@ const HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const ok      = b  => ({ statusCode: 200, headers: HEADERS, body: JSON.stringify(b) });
-const err     = (c, m) => ({ statusCode: c, headers: HEADERS, body: JSON.stringify({ error: m }) });
-const cors204 = () => ({ statusCode: 204, headers: HEADERS, body: '' });
+const ok      = b      => ({ statusCode: 200, headers: HEADERS, body: JSON.stringify(b) });
+const err     = (c, m) => ({ statusCode: c,   headers: HEADERS, body: JSON.stringify({ error: m }) });
+const cors204 = ()     => ({ statusCode: 204, headers: HEADERS, body: '' });
