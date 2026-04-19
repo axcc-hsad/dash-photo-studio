@@ -4,8 +4,7 @@
   "description": "DASH Photo Studio — LG Lifestyle Image Agent",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "replicate": "^1.0.1"
+    "@google/genai": "^0.14.0"
   },
   "engines": {
     "node": ">=18"

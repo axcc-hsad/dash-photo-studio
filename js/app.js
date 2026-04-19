@@ -531,9 +531,12 @@ function addHistory(url) {
 function doDownload() {
   if (!S.resultUrl) return;
   const a = document.createElement('a');
+  const ext = S.resultUrl.startsWith('data:image/jpeg') ? 'jpg' : 'png';
+  a.download = `DASH-${S.productType}-${S.region}-${S.ratio}-${Date.now()}.${ext}`;
   a.href = S.resultUrl;
-  a.download = `DASH-${S.productType}-${S.region}-${S.ratio}-${Date.now()}.png`;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
 }
 
 function doReset() {

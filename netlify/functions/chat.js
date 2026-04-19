@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────────
 //  chat.js  —  Netlify Function
 //  POST { messages, lang }  →  { reply }
-//  Optional: wraps Claude with DASH persona for freeform turns
+//  Uses Google Gemini Flash for DASH persona responses
 // ─────────────────────────────────────────────────────────────
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
 
 const SYSTEM_KO = `당신은 DASH Photo Studio의 AI 사진감독 에이전트입니다.
 LG 제품 라이프스타일 이미지 제작을 위한 전문 어시스턴트로, 전문적이면서도 친근하게 안내합니다.
@@ -17,7 +17,8 @@ export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') return cors204();
   if (event.httpMethod !== 'POST') return err(405, 'Method not allowed');
 
-  if (!process.env.ANTHROPIC_API_KEY) return err(500, 'ANTHROPIC_API_KEY not set');
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return err(500, 'GEMINI_API_KEY not set');
 
   let body;
   try { body = JSON.parse(event.body || '{}'); } catch { return err(400, 'Invalid JSON'); }
@@ -26,15 +27,17 @@ export async function handler(event) {
   if (!messages.length) return err(400, 'messages required');
 
   try {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 512,
-      system: lang === 'ko' ? SYSTEM_KO : SYSTEM_EN,
-      messages,
+    const ai = new GoogleGenAI({ apiKey });
+    const systemPrompt = lang === 'ko' ? SYSTEM_KO : SYSTEM_EN;
+    const lastMessage = messages[messages.length - 1];
+
+    const res = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      config: { systemInstruction: systemPrompt },
+      contents: lastMessage.content || lastMessage.text || '',
     });
-    const reply = response.content[0]?.text || '';
-    return ok({ reply });
+
+    return ok({ reply: res.text || '' });
   } catch (e) {
     console.error('chat error:', e);
     return err(500, e.message);
@@ -48,7 +51,6 @@ const HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-
-const ok  = (body) => ({ statusCode: 200, headers: HEADERS, body: JSON.stringify(body) });
-const err = (code, msg) => ({ statusCode: code, headers: HEADERS, body: JSON.stringify({ error: msg }) });
-const cors204 = () => ({ statusCode: 204, headers: HEADERS, body: '' });
+const ok      = b      => ({ statusCode: 200, headers: HEADERS, body: JSON.stringify(b) });
+const err     = (c, m) => ({ statusCode: c,   headers: HEADERS, body: JSON.stringify({ error: m }) });
+const cors204 = ()     => ({ statusCode: 204, headers: HEADERS, body: '' });
