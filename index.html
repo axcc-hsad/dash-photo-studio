@@ -517,11 +517,20 @@
     </div>
 
     <div class="idx-robot-wrap">
-      <video class="idx-robot-video"
+      <video class="idx-robot-video" id="robotVid"
              src="assets/robot.mp4"
-             autoplay loop muted playsinline
+             autoplay muted playsinline
              aria-label="DASH robot"></video>
     </div>
+    <script>
+      (function() {
+        const v = document.getElementById('robotVid');
+        v.addEventListener('ended', function() {
+          // 정면 포즈에서 2초 멈춤 후 재생
+          setTimeout(function() { v.play(); }, 2000);
+        });
+      })();
+    </script>
   </div>
 
   <div class="footer"><b>DASH FLOW</b> empowers HSAD teams to build and design their own agents.</div>
