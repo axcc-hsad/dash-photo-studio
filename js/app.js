@@ -8,7 +8,7 @@ const T = {
   ko: {
     idxMsg:      `안녕하세요. <span class="em">DASH Photographer</span> 입니다.\nLG.COM 제품 라이프스타일을 만들어보세요.\n원하는 이미지를 손쉽게 만들 수 있도록 도와드릴게요.`,
     btnStart:    '시작하기',
-    placeholder: 'PDP URL을 입력하거나 메시지를 작성하세요…',
+    placeholder: 'PDP URL을 입력해주세요.',
 
     step1:       'lg.com에서 라이프스타일 이미지 제작이 필요한 제품 PDP URL을 복사해서 입력해주세요.',
     analyzing:   'URL을 분석하고 있습니다. 잠시만 기다려주세요.',
@@ -58,7 +58,7 @@ const T = {
   en: {
     idxMsg:      `Hello. I'm <span class="em">DASH Photographer</span>.\nCreate lifestyle images for LG.COM products.\nI'll help you make the image you want, easily.`,
     btnStart:    'Get Started',
-    placeholder: 'Enter PDP URL or type a message…',
+    placeholder: 'Enter PDP URL.',
 
     step1:       'Please paste the LG product PDP URL for the lifestyle image you want to create.',
     analyzing:   'Analyzing URL. Please wait a moment.',
