@@ -96,7 +96,7 @@
     /* ════════════════════════════════════════════════
        01  INDEX
     ═══════════════════════════════════════════════ */
-    #idx { background: var(--bg); }
+    #idx { background: #FFFFFF; }
 
     .idx-body {
       display: flex; flex-direction: column;
@@ -105,49 +105,84 @@
       width: 100%; max-width: 460px;
     }
 
-    /* Speech bubble */
+    /* Glossy speech bubble */
     .bubble-card {
-      background: var(--white);
-      border-radius: var(--radius);
-      padding: 24px 26px 22px;
+      border-radius: 22px;
+      padding: 26px 28px 24px;
       width: 100%;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
       position: relative;
+      /* Glass / glossy effect */
+      background: linear-gradient(
+        160deg,
+        rgba(255,255,255,0.95) 0%,
+        rgba(245,245,248,0.92) 100%
+      );
+      box-shadow:
+        0 8px 32px rgba(0,0,0,0.10),
+        0 1.5px 0px rgba(255,255,255,0.9) inset,
+        0 -1px 0px rgba(0,0,0,0.04) inset;
+      border: 1px solid rgba(255,255,255,0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
     }
-    /* tail pointing down toward the robot */
+    /* Glossy highlight stripe at top */
+    .bubble-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 10%; right: 10%;
+      height: 40%;
+      border-radius: 22px 22px 60% 60% / 22px 22px 30px 30px;
+      background: linear-gradient(
+        180deg,
+        rgba(255,255,255,0.55) 0%,
+        rgba(255,255,255,0) 100%
+      );
+      pointer-events: none;
+    }
+    /* Tail pointing down toward the robot */
     .bubble-card::after {
       content: '';
       position: absolute;
-      bottom: -13px; left: 50%;
+      bottom: -14px; left: 50%;
       transform: translateX(-50%);
-      border-left: 13px solid transparent;
-      border-right: 13px solid transparent;
-      border-top: 13px solid var(--white);
-      filter: drop-shadow(0 3px 3px rgba(0,0,0,0.05));
+      border-left: 14px solid transparent;
+      border-right: 14px solid transparent;
+      border-top: 14px solid rgba(248,248,250,0.96);
+      filter: drop-shadow(0 4px 4px rgba(0,0,0,0.06));
     }
 
     .bubble-text {
-      font-size: 14px; line-height: 1.7; color: var(--dark);
+      font-size: 14px; line-height: 1.75; color: var(--dark);
     }
     .bubble-text .em { color: var(--red); font-weight: 600; }
 
     .btn-start {
-      display: block; margin: 20px auto 0;
+      display: block; margin: 22px auto 0;
       background: var(--red); color: #fff;
       border: none; border-radius: 24px;
-      padding: 12px 44px;
+      padding: 13px 48px;
       font-size: 14px; font-weight: 600;
       font-family: 'Inter', sans-serif;
       cursor: pointer; letter-spacing: 0.02em;
       transition: opacity 0.15s, transform 0.1s;
+      box-shadow: 0 4px 16px rgba(200,16,46,0.30);
     }
     .btn-start:hover { opacity: 0.88; transform: translateY(-1px); }
 
-    /* Robot on index */
-    .idx-robot {
-      width: 180px; height: auto;
-      margin-top: 20px;
+    /* Robot video on index */
+    .idx-robot-wrap {
+      margin-top: 12px;
+      width: 210px; height: 210px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      background: #fff;
+    }
+    .idx-robot-video {
+      width: 260px; height: auto;
+      margin-top: 10px;
       display: block;
+      mix-blend-mode: multiply;
     }
 
     /* ════════════════════════════════════════════════
@@ -483,7 +518,12 @@
       <button class="btn-start" id="btn-start" onclick="goChat()">시작하기</button>
     </div>
 
-    <img class="idx-robot" src="assets/robot.png" alt="DASH robot" />
+    <div class="idx-robot-wrap">
+      <video class="idx-robot-video"
+             src="assets/robot.mp4"
+             autoplay loop muted playsinline
+             aria-label="DASH robot"></video>
+    </div>
   </div>
 
   <div class="footer"><b>DASH FLOW</b> empowers HSAD teams to build and design their own agents.</div>
