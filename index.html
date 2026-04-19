@@ -169,12 +169,18 @@
     }
     .btn-start:hover { opacity: 0.88; transform: translateY(-1px); }
 
-    /* Robot video on index — free, no clip */
+    /* Robot video on index — circular */
+    .idx-robot-wrap {
+      margin-top: 10px;
+      width: 220px; height: 220px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      background: #E8E6E2;
+    }
     .idx-robot-video {
-      width: 280px; height: auto;
-      margin-top: 0px;
+      width: 300px; height: auto;
       display: block;
-      mix-blend-mode: multiply;
     }
 
     /* ════════════════════════════════════════════════
@@ -510,10 +516,12 @@
       <button class="btn-start" id="btn-start" onclick="goChat()">시작하기</button>
     </div>
 
-    <video class="idx-robot-video"
-           src="assets/robot.mp4"
-           autoplay loop muted playsinline
-           aria-label="DASH robot"></video>
+    <div class="idx-robot-wrap">
+      <video class="idx-robot-video"
+             src="assets/robot.mp4"
+             autoplay loop muted playsinline
+             aria-label="DASH robot"></video>
+    </div>
   </div>
 
   <div class="footer"><b>DASH FLOW</b> empowers HSAD teams to build and design their own agents.</div>
