@@ -96,7 +96,7 @@
     /* ════════════════════════════════════════════════
        01  INDEX
     ═══════════════════════════════════════════════ */
-    #idx { background: #FFFFFF; }
+    #idx { background: #ECEAE7; }
 
     .idx-body {
       display: flex; flex-direction: column;
@@ -147,7 +147,7 @@
       transform: translateX(-50%);
       border-left: 14px solid transparent;
       border-right: 14px solid transparent;
-      border-top: 14px solid rgba(248,248,250,0.96);
+      border-top: 14px solid rgba(245,244,242,0.97);
       filter: drop-shadow(0 4px 4px rgba(0,0,0,0.06));
     }
 
@@ -169,18 +169,10 @@
     }
     .btn-start:hover { opacity: 0.88; transform: translateY(-1px); }
 
-    /* Robot video on index */
-    .idx-robot-wrap {
-      margin-top: 12px;
-      width: 210px; height: 210px;
-      border-radius: 50%;
-      overflow: hidden;
-      display: flex; align-items: center; justify-content: center;
-      background: #fff;
-    }
+    /* Robot video on index — free, no clip */
     .idx-robot-video {
-      width: 260px; height: auto;
-      margin-top: 10px;
+      width: 280px; height: auto;
+      margin-top: 0px;
       display: block;
       mix-blend-mode: multiply;
     }
@@ -518,12 +510,10 @@
       <button class="btn-start" id="btn-start" onclick="goChat()">시작하기</button>
     </div>
 
-    <div class="idx-robot-wrap">
-      <video class="idx-robot-video"
-             src="assets/robot.mp4"
-             autoplay loop muted playsinline
-             aria-label="DASH robot"></video>
-    </div>
+    <video class="idx-robot-video"
+           src="assets/robot.mp4"
+           autoplay loop muted playsinline
+           aria-label="DASH robot"></video>
   </div>
 
   <div class="footer"><b>DASH FLOW</b> empowers HSAD teams to build and design their own agents.</div>
