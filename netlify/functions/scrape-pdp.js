@@ -13,7 +13,7 @@ export async function handler(event) {
 
   try {
     const html = await fetchPage(url);
-    const result = parsePage(html, url);
+    const result = await parsePage(html, url);
     return ok(result);
   } catch (e) {
     console.error('scrape-pdp error:', e);
@@ -34,7 +34,7 @@ async function fetchPage(url) {
   return res.text();
 }
 
-function parsePage(html, url) {
+async function parsePage(html, url) {
   // ── Product name ────────────────────────────────────────────
   const nameMatch =
     html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i) ||
@@ -75,7 +75,22 @@ function parsePage(html, url) {
 
   // 4. LG CDN patterns in script/data attributes
   const cdnRe = /https?:\/\/(?:gscs-b2c\.lge\.com|[^"'\s]*?lg\.com\/content)[^"'\s,)>]+\.(?:jpg|jpeg|png|webp)(?:[^"'\s,)>]*)?/gi;
-  for (const m of html.matchAll(cdnRe)) imgSet.add(m[0].split('\\u')[0]);
+  for (const m of html.matchAll(cdnRe)) {
+    const clean = m[0].split('\\u')[0].replace(/[\\'"]+$/, '');
+    imgSet.add(clean);
+  }
+
+  // 4b. If we found a gallery/medium01.jpg pattern, probe for medium02..06
+  const galleryBase = [...imgSet].find(u2 => /\/gallery\/medium0?1\.(jpg|jpeg|png|webp)/i.test(u2));
+  if (galleryBase) {
+    for (let n = 2; n <= 6; n++) {
+      const probeUrl = galleryBase.replace(/medium0?1(\.\w+)$/i, `medium0${n}$1`);
+      try {
+        const r = await fetch(probeUrl, { method: 'HEAD', redirect: 'follow' });
+        if (r.ok) imgSet.add(probeUrl);
+      } catch { /* skip */ }
+    }
+  }
 
   // 5. data-src / src with product image patterns
   const srcRe = /(?:data-src|src)="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/gi;
@@ -91,7 +106,8 @@ function parsePage(html, url) {
   // ── Filter & rank ───────────────────────────────────────────
   const scored = [...imgSet]
     .filter(u2 => /\.(?:jpg|jpeg|png|webp)/i.test(u2))
-    .filter(u2 => !/\d{1,2}x\d{1,2}(?!\d)/.test(u2))   // skip tiny thumbs
+    .filter(u2 => !/\d{1,2}x\d{1,2}(?!\d)/.test(u2))   // skip tiny thumbs like 2x2
+    .filter(u2 => !/[_-]\d{2,3}x\d{2,3}[_.-]/i.test(u2)) // skip 450x450-style sized thumbs
     .filter(u2 => !/icon|logo|badge|flag|ribbon|sprite/i.test(u2))
     .map(u2 => ({ url: u2, score: scoreImage(u2) }))
     .sort((a, b) => b.score - a.score)
@@ -123,9 +139,10 @@ function parsePage(html, url) {
 function collectImagesFromObject(obj, set, depth = 0) {
   if (depth > 12 || !obj) return;
   if (typeof obj === 'string') {
-    if (/^https?:\/\/.+\.(?:jpg|jpeg|png|webp)/i.test(obj) &&
-        !obj.includes('icon') && !obj.includes('logo')) {
-      set.add(obj);
+    const clean = obj.replace(/[\\'"]+$/, '');
+    if (/^https?:\/\/.+\.(?:jpg|jpeg|png|webp)/i.test(clean) &&
+        !clean.includes('icon') && !clean.includes('logo')) {
+      set.add(clean);
     }
     return;
   }
