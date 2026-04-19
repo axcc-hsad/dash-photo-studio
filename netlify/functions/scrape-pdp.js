@@ -24,77 +24,138 @@ export async function handler(event) {
 async function fetchPage(url) {
   const res = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; DASHBot/1.0)',
-      'Accept': 'text/html,application/xhtml+xml',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
     },
     redirect: 'follow',
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }
 
 function parsePage(html, url) {
-  // ── Product name ────────────────────────────────────────
+  // ── Product name ────────────────────────────────────────────
   const nameMatch =
     html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i) ||
-    html.match(/<meta[^>]+name="title"[^>]+content="([^"]+)"/i) ||
-    html.match(/<h1[^>]*class="[^"]*(?:product|title)[^"]*"[^>]*>([^<]+)<\/h1>/i);
-  const productName = nameMatch ? decode(nameMatch[1]) : 'LG Product';
+    html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  const productName = nameMatch ? decode(nameMatch[1]).split('|')[0].trim() : 'LG Product';
 
-  // ── Product type ────────────────────────────────────────
-  const u = url.toLowerCase() + ' ' + productName.toLowerCase();
+  // ── Product type ────────────────────────────────────────────
+  const u = (url + ' ' + productName).toLowerCase();
   const productType =
-    /refrigerator|fridge|lrmv|lfxs|lrfxs/.test(u) ? 'fridge' :
-    /washer|dryer|wm\d|dlex|dlgx/.test(u)          ? 'washer' :
-    /oled|qned|nano|tv|65u|55u|75u/.test(u)         ? 'tv'     : 'appliance';
+    /refrigerator|fridge|freezer|lrmv|lfxs|gsxv|gsx|instaview/.test(u) ? 'fridge' :
+    /washer|dryer|wm\d|dlex|dlgx/.test(u)                               ? 'washer' :
+    /oled|qned|nano|tv|65u|55u|75u/.test(u)                             ? 'tv'     : 'appliance';
 
-  // ── Images ──────────────────────────────────────────────
-  const imgUrls = new Set();
+  // ── Collect images ──────────────────────────────────────────
+  const imgSet = new Set();
 
-  // og:image
-  const ogM = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/gi) || [];
-  ogM.forEach(m => { const c = m.match(/content="([^"]+)"/i); if (c) imgUrls.add(c[1]); });
+  // 1. __NEXT_DATA__ (Next.js — most reliable for LG sites)
+  const nextMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]{10,})<\/script>/);
+  if (nextMatch) {
+    try {
+      const nextData = JSON.parse(nextMatch[1]);
+      collectImagesFromObject(nextData, imgSet);
+    } catch { /* ignore parse error */ }
+  }
 
-  // JSON-LD schema
-  const jldM = html.match(/"image"\s*:\s*\[([^\]]+)\]/g) || [];
-  jldM.forEach(m => {
-    const urls = m.match(/https?:\/\/[^\s"',]+/g) || [];
-    urls.forEach(u2 => imgUrls.add(u2));
-  });
+  // 2. JSON-LD schema.org
+  const jldMatches = [...html.matchAll(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi)];
+  for (const m of jldMatches) {
+    try {
+      const obj = JSON.parse(m[1]);
+      collectImagesFromObject(obj, imgSet);
+    } catch { /* ignore */ }
+  }
 
-  // data-src / src with lg-specific patterns
-  const srcM = html.match(/(?:data-src|src)="(https:\/\/[^"]*lg[^"]*\.(?:jpg|jpeg|png|webp)[^"]*)"[^>]*>/gi) || [];
-  srcM.forEach(m => {
-    const c = m.match(/(?:data-src|src)="([^"]+)"/i);
-    if (c && !c[1].includes('icon') && !c[1].includes('logo') && !c[1].includes('badge')) {
-      imgUrls.add(c[1]);
+  // 3. og:image meta tags
+  const ogMatches = [...html.matchAll(/<meta[^>]+property="og:image[^"]*"[^>]+content="([^"]+)"/gi)];
+  for (const m of ogMatches) imgSet.add(m[1]);
+
+  // 4. LG CDN patterns in script/data attributes
+  const cdnRe = /https?:\/\/(?:gscs-b2c\.lge\.com|[^"'\s]*?lg\.com\/content)[^"'\s,)>]+\.(?:jpg|jpeg|png|webp)(?:[^"'\s,)>]*)?/gi;
+  for (const m of html.matchAll(cdnRe)) imgSet.add(m[0].split('\\u')[0]);
+
+  // 5. data-src / src with product image patterns
+  const srcRe = /(?:data-src|src)="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/gi;
+  for (const m of html.matchAll(srcRe)) {
+    const u2 = m[1];
+    if ((u2.includes('lge.com') || u2.includes('lg.com')) &&
+        !u2.includes('icon') && !u2.includes('logo') && !u2.includes('badge') &&
+        !u2.includes('flag') && !u2.includes('ribbon')) {
+      imgSet.add(u2);
     }
-  });
+  }
 
-  // Filter to product-looking images only, take top 6
-  const filtered = [...imgUrls]
-    .filter(u2 => /\.(jpg|jpeg|png|webp)/i.test(u2))
-    .filter(u2 => !/\d{1,3}x\d{1,3}/.test(u2)) // skip tiny thumbnails
+  // ── Filter & rank ───────────────────────────────────────────
+  const scored = [...imgSet]
+    .filter(u2 => /\.(?:jpg|jpeg|png|webp)/i.test(u2))
+    .filter(u2 => !/\d{1,2}x\d{1,2}(?!\d)/.test(u2))   // skip tiny thumbs
+    .filter(u2 => !/icon|logo|badge|flag|ribbon|sprite/i.test(u2))
+    .map(u2 => ({ url: u2, score: scoreImage(u2) }))
+    .sort((a, b) => b.score - a.score)
     .slice(0, 6);
 
-  const labels = {
-    ko: ['정면 촬영', '측면 촬영', '3/4 구도', '상단 뷰', '디테일', '라이프스타일'],
-    en: ['Front View', 'Side View', '3/4 Angle', 'Top View', 'Detail', 'Lifestyle'],
-  };
-  const scores = [4.7, 4.0, 3.6, 3.3, 3.1, 2.9];
+  // ── Build candidates ────────────────────────────────────────
+  const VIEW_LABELS = ['Front View', 'Side View', '3/4 Angle', 'Detail Shot', 'Lifestyle', 'Top View'];
+  const QC_SCORES   = [4.8, 4.3, 4.0, 3.7, 3.5, 3.2];
 
-  const candidateImages = filtered.map((u2, i) => ({
-    url: u2,
-    label: labels.en[i] || `View ${i + 1}`,
-    score: scores[i] || 2.5,
+  let candidateImages = scored.map((item, i) => ({
+    url:   item.url,
+    label: VIEW_LABELS[i] || `View ${i + 1}`,
+    score: QC_SCORES[i] || 3.0,
   }));
 
-  // Fallback: at least one placeholder if nothing found
+  // ── Fallback: at least one placeholder ──────────────────────
   if (candidateImages.length === 0) {
-    candidateImages.push({ url: 'https://placehold.co/300x300/eee/555?text=Product', label: 'Product', score: 3.0 });
+    candidateImages = [{
+      url:   'https://placehold.co/400x400/eee/555?text=Product',
+      label: 'Product',
+      score: 3.0,
+    }];
   }
 
   return { productName, productType, candidateImages };
+}
+
+// Recursively walk any object/array and collect image URLs
+function collectImagesFromObject(obj, set, depth = 0) {
+  if (depth > 12 || !obj) return;
+  if (typeof obj === 'string') {
+    if (/^https?:\/\/.+\.(?:jpg|jpeg|png|webp)/i.test(obj) &&
+        !obj.includes('icon') && !obj.includes('logo')) {
+      set.add(obj);
+    }
+    return;
+  }
+  if (Array.isArray(obj)) {
+    obj.forEach(item => collectImagesFromObject(item, set, depth + 1));
+    return;
+  }
+  if (typeof obj === 'object') {
+    for (const [key, val] of Object.entries(obj)) {
+      // Prioritise keys that suggest gallery images
+      const isImgKey = /image|photo|gallery|media|src|url|thumb|picture/i.test(key);
+      if (isImgKey || depth < 6) {
+        collectImagesFromObject(val, set, depth + (isImgKey ? 0 : 1));
+      }
+    }
+  }
+}
+
+// Score images — higher = more likely to be a good product shot
+function scoreImage(url) {
+  let s = 0;
+  if (url.includes('gscs-b2c.lge.com')) s += 10;
+  if (url.includes('/content/dam')) s += 8;
+  if (/[A-Z]{2,}[-_]\d{3,}/i.test(url)) s += 5;   // model-number-like pattern
+  if (/(?:main|hero|front|primary|featured)/i.test(url)) s += 6;
+  if (/gallery|product/i.test(url)) s += 4;
+  if (/\d{3,4}x\d{3,4}/.test(url)) s -= 3;         // sized thumbnails less preferred
+  if (/(?:2000|1600|1200|900|large|xl)/i.test(url)) s += 3;   // large images preferred
+  if (/thumbnail|thumb|small|xs|_s\./i.test(url)) s -= 5;
+  return s;
 }
 
 function decode(s) {
@@ -108,7 +169,6 @@ const HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-
-const ok  = (body) => ({ statusCode: 200, headers: HEADERS, body: JSON.stringify(body) });
-const err = (code, msg) => ({ statusCode: code, headers: HEADERS, body: JSON.stringify({ error: msg }) });
-const cors204 = () => ({ statusCode: 204, headers: HEADERS, body: '' });
+const ok      = b      => ({ statusCode: 200, headers: HEADERS, body: JSON.stringify(b) });
+const err     = (c, m) => ({ statusCode: c,   headers: HEADERS, body: JSON.stringify({ error: m }) });
+const cors204 = ()     => ({ statusCode: 204, headers: HEADERS, body: '' });
