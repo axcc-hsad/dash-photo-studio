@@ -134,10 +134,25 @@ const S = {
 };
 
 // ══ DOM ══════════════════════════════════════════════════════════
-const $msgs = document.getElementById('msgList');
-const $inp  = document.getElementById('inp');
-const $send = document.getElementById('sendBtn');
-const $hist = document.getElementById('histStrip');
+const $msgs     = document.getElementById('msgList');
+const $inp      = document.getElementById('inp');
+const $send     = document.getElementById('sendBtn');
+const $hist     = document.getElementById('histStrip');
+const $inputBar = document.querySelector('.input-bar');
+
+// Steps that require text input from user
+const INPUT_STEPS = ['URL', 'REVISE'];
+
+function updateInputBar() {
+  const show = INPUT_STEPS.includes(S.step);
+  $inputBar.classList.toggle('visible', show);
+  if (S.step === 'URL') {
+    $inp.placeholder = t('placeholder');
+  } else if (S.step === 'REVISE') {
+    $inp.placeholder = S.lang === 'ko' ? '수정 내용을 직접 입력하세요…' : 'Type your revision request…';
+  }
+  if (show) setTimeout(() => $inp.focus(), 50);
+}
 
 // ══ Boot ═════════════════════════════════════════════════════════
 window.addEventListener('DOMContentLoaded', () => {
@@ -153,6 +168,7 @@ function goChat() {
   document.getElementById('chat').classList.add('active');
   if (S.step === 'IDLE') {
     S.step = 'URL';
+    updateInputBar();
     setTimeout(() => stream(t('step1')), 350);
   }
 }
@@ -212,6 +228,7 @@ async function onUrl(url) {
   });
   setBusy(false);
   S.step = 'IMAGES';
+  updateInputBar();
 }
 
 // ══ Demo ═════════════════════════════════════════════════════════
@@ -295,6 +312,7 @@ function pickRegion(k, el) {
   setTimeout(() => {
     userSay(t('regions')[k].label);
     S.step = 'RATIO';
+    updateInputBar();
     showRatio();
   }, 350);
 }
@@ -328,6 +346,7 @@ function pickRatio(k, el) {
   setTimeout(() => {
     userSay(t('ratios')[k].label);
     S.step = 'PROMPT';
+    updateInputBar();
     showPrompt();
   }, 350);
 }
@@ -374,6 +393,7 @@ async function startGen() {
   freezeButtons();
   setBusy(true);
   S.step = 'GEN';
+  updateInputBar();
 
   // Progress bubble
   const pid = 'p' + Date.now();
@@ -454,6 +474,7 @@ async function showResult(imgUrl, qc) {
     return wrap;
   });
   S.step = 'RESULT';
+  updateInputBar();
 }
 
 // ══ Revision ═════════════════════════════════════════════════════
@@ -471,6 +492,7 @@ async function showRevPanel() {
   });
   setBusy(false);
   S.step = 'REVISE';
+  updateInputBar();
 }
 
 async function onRevision(text) { await applyRev(text); }

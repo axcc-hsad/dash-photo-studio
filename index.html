@@ -75,7 +75,7 @@
     }
     .site-title {
       font-size: 26px; font-weight: 800;
-      color: var(--red); letter-spacing: 0.14em;
+      color: var(--red); letter-spacing: 0.04em;
       text-transform: uppercase; line-height: 1;
     }
     .site-sub {
@@ -188,26 +188,18 @@
     ═══════════════════════════════════════════════ */
     #chat { position: relative; }
 
-    /* Studio BG */
+    /* Studio BG — real background image */
     .studio-bg {
       position: fixed; inset: 0; z-index: 0;
-      background: #DADADA;
-      display: flex; align-items: stretch;
-      overflow: hidden;
+      background: url('assets/background.png') center center / cover no-repeat;
     }
-    /* SVG Studio lights (left & right) */
-    .studio-side {
-      flex: 1;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .studio-side svg { width: 100%; max-width: 240px; height: auto; opacity: 0.9; }
 
     /* Chat layout */
     .chat-wrap {
       position: relative; z-index: 10;
       display: flex; flex-direction: column;
       align-items: center; width: 100%;
-      flex: 1; padding: 0 16px 16px;
+      flex: 1; padding: 50px 16px 16px;
     }
 
     /* Chat panel */
@@ -218,7 +210,7 @@
       display: flex; flex-direction: column;
       flex: 1;
       min-height: 0;
-      max-height: calc(100vh - 220px);
+      max-height: calc(100vh - 180px);
       box-shadow: 0 6px 36px rgba(0,0,0,0.14);
       overflow: hidden;
     }
@@ -424,11 +416,12 @@
 
     /* ── Input bar ───────────────────────────────── */
     .input-bar {
-      display: flex; align-items: center; gap: 10px;
+      display: none; align-items: center; gap: 10px;
       padding: 12px 14px;
       border-top: 1px solid #f0f0f0;
       background: var(--white);
     }
+    .input-bar.visible { display: flex; }
     .inp-field {
       flex: 1; border: 1.5px solid var(--border);
       border-radius: 24px; padding: 10px 16px;
@@ -542,53 +535,8 @@
 ═══════════════════════════════════════ -->
 <div class="screen" id="chat">
 
-  <!-- Studio background -->
-  <div class="studio-bg" aria-hidden="true">
-    <div class="studio-side"><!-- Left softbox -->
-      <svg viewBox="0 0 200 480" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- stand -->
-        <rect x="95" y="200" width="10" height="240" rx="4" fill="#333"/>
-        <polygon points="80,440 120,440 130,480 70,480" fill="#222"/>
-        <polygon points="60,480 140,480 155,500 45,500" fill="#222"/>
-        <!-- arm -->
-        <rect x="100" y="155" width="60" height="8" rx="4" fill="#444" transform="rotate(-20 100 155)"/>
-        <!-- softbox body -->
-        <rect x="105" y="60" width="90" height="115" rx="10" fill="#CCCCCC"/>
-        <rect x="108" y="63" width="84" height="109" rx="8" fill="#F0F0F0"/>
-        <!-- diffuser panel (bright) -->
-        <rect x="111" y="66" width="78" height="103" rx="6" fill="white" opacity="0.95"/>
-        <!-- subtle gradient on softbox face -->
-        <rect x="111" y="66" width="78" height="103" rx="6" fill="url(#gleft)" opacity="0.3"/>
-        <defs>
-          <radialGradient id="gleft" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stop-color="white" stop-opacity="1"/>
-            <stop offset="100%" stop-color="white" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <!-- frame edges -->
-        <rect x="105" y="60" width="90" height="115" rx="10" stroke="#AAAAAA" stroke-width="2" fill="none"/>
-      </svg>
-    </div>
-    <div class="studio-side" style="justify-content:flex-end"><!-- Right softbox (mirrored) -->
-      <svg viewBox="0 0 200 480" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:scaleX(-1)">
-        <rect x="95" y="200" width="10" height="240" rx="4" fill="#333"/>
-        <polygon points="80,440 120,440 130,480 70,480" fill="#222"/>
-        <polygon points="60,480 140,480 155,500 45,500" fill="#222"/>
-        <rect x="100" y="155" width="60" height="8" rx="4" fill="#444" transform="rotate(-20 100 155)"/>
-        <rect x="105" y="60" width="90" height="115" rx="10" fill="#CCCCCC"/>
-        <rect x="108" y="63" width="84" height="109" rx="8" fill="#F0F0F0"/>
-        <rect x="111" y="66" width="78" height="103" rx="6" fill="white" opacity="0.95"/>
-        <rect x="111" y="66" width="78" height="103" rx="6" fill="url(#gright)" opacity="0.3"/>
-        <defs>
-          <radialGradient id="gright" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stop-color="white" stop-opacity="1"/>
-            <stop offset="100%" stop-color="white" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect x="105" y="60" width="90" height="115" rx="10" stroke="#AAAAAA" stroke-width="2" fill="none"/>
-      </svg>
-    </div>
-  </div>
+  <!-- Studio background (real image) -->
+  <div class="studio-bg" aria-hidden="true"></div>
 
   <!-- Chat UI overlay -->
   <div class="top-bar" style="position:relative;z-index:20">
