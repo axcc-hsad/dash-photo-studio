@@ -1,0 +1,13 @@
+{
+  "name": "dash-photo-studio",
+  "version": "1.0.0",
+  "description": "DASH Photo Studio — LG Lifestyle Image Agent",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "replicate": "^1.0.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
