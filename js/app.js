@@ -803,10 +803,4 @@ function esc(s)     { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'
 function esc1(c)    { return c==='&'?'&amp;':c==='<'?'&lt;':c==='>'?'&gt;':c; }
 function isUrl(s)   { try{const u=new URL(s);return u.protocol==='https:'||u.protocol==='http:';}catch{return false;} }
 
-async function apiCall(ep, body) {
-  const r = await fetch(`${CONFIG.API_BASE}/${ep}`, {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`API ${r.status}`);
-  return r.json();
-}
+// apiCall is provided by client-api.js
