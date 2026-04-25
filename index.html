@@ -96,13 +96,13 @@
     /* index footer: anchored to bottom */
     #idx .footer { margin-top: auto; }
 
-    /* chat footer: anchored to bottom — svh + safe-area for iOS */
+    /* chat footer: anchored to bottom — svh + safe-area for iOS/Teams */
     #chat {
       height: 100vh; height: 100svh;
       overflow: hidden;
-      padding-bottom: env(safe-area-inset-bottom, 0px);
+      padding-bottom: max(env(safe-area-inset-bottom, 0px), 60px);
     }
-    #chat .footer { padding-bottom: max(env(safe-area-inset-bottom, 0px), 16px); }
+    #chat .footer { margin-top: 0; padding: 0 20px 8px; }
     #chat .top-bar     { padding-top: 10px; }
     #chat .site-header { padding-top: 10px; }          /* 10px gap below KO/EN */
     #chat .chat-wrap   { min-height: 0; padding: 20px 16px 0; }
