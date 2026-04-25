@@ -13,6 +13,7 @@ const T = {
     step1:       'lg.com에서 라이프스타일 이미지 제작이 필요한 제품 PDP URL을 복사해서 입력해주세요.',
     analyzing:   'URL을 분석하고 있습니다. 잠시만 기다려주세요.',
     invalidUrl:  '올바른 lg.com 제품 URL을 입력해주세요.\n예: https://www.lg.com/us/refrigerators/lg-LRMVS3006S',
+    noImages:    '제품 이미지를 불러오지 못했습니다. 잠시 후 다시 시도하거나 다른 URL을 입력해주세요.',
 
     foundImages: (n, name, features) => {
       const feat = features && features.length
@@ -68,6 +69,7 @@ const T = {
     step1:       'Please paste the LG product PDP URL for the lifestyle image you want to create.',
     analyzing:   'Analyzing URL. Please wait a moment.',
     invalidUrl:  'Please enter a valid lg.com product URL.\nExample: https://www.lg.com/us/refrigerators/lg-LRMVS3006S',
+    noImages:    'Could not load product images. Please try again or use a different URL.',
 
     foundImages: (n, name, features) => {
       const feat = features && features.length
@@ -235,9 +237,20 @@ async function onUrl(url) {
   await stream(t('analyzing'));
   showTyping();   // keep dots while actually fetching
 
-  const data = CONFIG.DEMO_MODE ? demoScrape(url) : await apiCall('scrape-pdp', {url}).catch(e => { console.error('scrape error:', e); return null; });
+  let data = null;
+  let scrapeErr = null;
+  if (CONFIG.DEMO_MODE) {
+    data = demoScrape(url);
+  } else {
+    data = await apiCall('scrape-pdp', {url}).catch(e => { scrapeErr = e; console.error('[DASH] scrape:', e); return null; });
+  }
   hideTyping();
-  if (!data) { await stream(t('invalidUrl')); setBusy(false); return; }
+  if (!data) {
+    const msg = scrapeErr?.message?.includes('No image')
+      ? t('noImages')
+      : t('invalidUrl');
+    await stream(msg); setBusy(false); return;
+  }
 
   S.productName    = data.productName;
   S.productType    = data.productType;
