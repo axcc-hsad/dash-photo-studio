@@ -582,30 +582,30 @@ let _idxGenId = 0;
 async function streamIdxBubble(lang) {
   const myId = ++_idxGenId;          // cancel any in-progress stream
   const el  = document.getElementById('idx-msg');
-  const btn = document.getElementById('btn-start');
-  if (!el || !btn) return;
+  if (!el) return;
 
-  // Reset
+  const raw = (T[lang] || T.ko).idxMsg;
+
+  // Pre-render full text invisibly for one frame to lock the bubble height
+  el.style.visibility = 'hidden';
+  el.innerHTML = raw.replace(/\n/g, '<br>');
+  await delay(16);
+  el.style.minHeight = el.offsetHeight + 'px';
+  el.style.visibility = 'visible';
   el.innerHTML = '';
-  btn.style.transition = '';
-  btn.style.opacity = '0';
-  btn.style.pointerEvents = 'none';
 
-  // Blinking cursor inside the bubble
+  // Blinking cursor
   const cursor = document.createElement('span');
   cursor.className = 'stream-cursor';
   el.appendChild(cursor);
 
-  // Use the same text source as applyLang — contains <span class="em"> and \n
-  const raw = (T[lang] || T.ko).idxMsg;
-  const segments = parseSegments(raw);   // reuse chat engine's parser
+  const segments = parseSegments(raw);
   let visibleHTML = '';
 
   for (const seg of segments) {
-    if (myId !== _idxGenId) return;   // aborted by a newer call
+    if (myId !== _idxGenId) return;
 
     if (seg.type === 'html') {
-      // Tags render instantly (opening/closing <span class="em">, etc.)
       visibleHTML += seg.val;
       el.innerHTML = visibleHTML;
       el.appendChild(cursor);
@@ -622,12 +622,8 @@ async function streamIdxBubble(lang) {
   }
 
   if (myId !== _idxGenId) return;
-
-  // Done — remove cursor, fade in button
   cursor.remove();
-  btn.style.transition = 'opacity 0.45s ease';
-  btn.style.opacity = '1';
-  btn.style.pointerEvents = '';
+  el.style.minHeight = '';  // release fixed height after streaming
 }
 
 // ══ STREAMING TEXT ENGINE ════════════════════════════════════════
