@@ -98,9 +98,11 @@
 
     /* chat footer: anchored to bottom via height:100vh flex */
     #chat { height: 100vh; overflow: hidden; }
-    #chat .footer { margin-top: 0; }
-    #chat .chat-wrap { min-height: 0; padding-bottom: 0; }
+    #chat .top-bar    { padding-top: 10px; }          /* -8px  */
+    #chat .site-header { padding-top: 2px; }           /* -12px */
+    #chat .chat-wrap  { min-height: 0; padding: 0 16px 0; } /* -30px  → total ≈ -50px */
     #chat .chat-panel { max-height: none; }
+    #chat .footer     { margin-top: 20px; }
 
     /* ════════════════════════════════════════════════
        01  INDEX
@@ -497,7 +499,7 @@
     /* ── Responsive: Desktop ─────────────────────── */
     @media (min-width: 768px) {
       :root { --panel-w: 700px; }
-      #chat .chat-wrap { padding: 24px 24px 0; }
+      #chat .chat-wrap { padding: 0 24px 0; }
       .msg-bub { max-width: 86%; }
     }
 
