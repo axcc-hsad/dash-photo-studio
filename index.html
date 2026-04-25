@@ -93,8 +93,8 @@
     }
     .footer b { color: var(--red); font-weight: 700; }
 
-    /* index footer: anchored to bottom */
-    #idx .footer { margin-top: auto; }
+    /* index footer: anchored to bottom with 40px from browser nav */
+    #idx .footer { margin-top: auto; padding-bottom: max(env(safe-area-inset-bottom, 0px), 40px); }
 
     /* chat footer: anchored to bottom — svh + safe-area for iOS/Teams */
     #chat {
