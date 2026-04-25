@@ -96,11 +96,11 @@
     /* index footer: anchored to bottom */
     #idx .footer { margin-top: auto; }
 
-    /* chat footer: anchored to bottom via height:100vh flex */
-    #chat { height: 100vh; overflow: hidden; }
-    #chat .top-bar    { padding-top: 10px; }          /* -8px  */
-    #chat .site-header { padding-top: 2px; }           /* -12px */
-    #chat .chat-wrap  { min-height: 0; padding: 20px 16px 0; }
+    /* chat footer: anchored to bottom — 100svh accounts for iOS browser chrome */
+    #chat { height: 100vh; height: 100svh; overflow: hidden; }
+    #chat .top-bar     { padding-top: 10px; }
+    #chat .site-header { padding-top: 10px; }          /* 10px gap below KO/EN */
+    #chat .chat-wrap   { min-height: 0; padding: 20px 16px 0; }
     #chat .chat-panel { max-height: none; }
     #chat .footer     { margin-top: 20px; }
 
