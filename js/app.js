@@ -594,7 +594,9 @@ async function streamIdxBubble(lang) {
 
   // Lock bubble height synchronously (text already in DOM from HTML, just hidden)
   // — no await here, so no repaint between measure → clear
-  el.style.minHeight = el.offsetHeight + 'px';
+  // Add one line-height as buffer so the streaming cursor never pushes text to a new line
+  const lineH = parseFloat(getComputedStyle(el).lineHeight) || 24;
+  el.style.minHeight = (el.offsetHeight + lineH) + 'px';
   el.style.visibility = 'visible';
   el.innerHTML = '';
 
