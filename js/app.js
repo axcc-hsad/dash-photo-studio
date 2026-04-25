@@ -164,6 +164,12 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // ══ Screen nav ═══════════════════════════════════════════════════
+function goHome() {
+  document.getElementById('chat').classList.remove('active');
+  document.getElementById('idx').classList.add('active');
+  streamIdxBubble(S.lang);
+}
+
 function goChat() {
   document.getElementById('idx').classList.remove('active');
   document.getElementById('chat').classList.add('active');

@@ -471,6 +471,32 @@
       border-radius: 4px; padding: 1px 4px;
     }
 
+    /* ── HOME button ────────────────────────────── */
+    .home-btn {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: rgba(255,255,255,0.6);
+      border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--dark);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      transition: background 0.15s;
+      flex-shrink: 0;
+    }
+    .home-btn:hover { background: rgba(255,255,255,0.9); }
+
+    /* ── Responsive: Desktop ─────────────────────── */
+    @media (min-width: 768px) {
+      :root { --panel-w: 700px; }
+      .chat-wrap { padding: 24px 24px 16px; }
+      .chat-panel { max-height: calc(100vh - 200px); }
+    }
+
+    /* ── Responsive: Mobile footer fix ──────────── */
+    @media (max-width: 767px) {
+      .chat-panel { max-height: calc(100vh - 240px); }
+    }
+
     /* ── Streaming cursor ────────────────────────── */
     .stream-cursor {
       display: inline-block;
@@ -545,7 +571,13 @@
   <div class="studio-bg" aria-hidden="true"></div>
 
   <!-- Chat UI overlay -->
-  <div class="top-bar" style="position:relative;z-index:20">
+  <div class="top-bar" style="position:relative;z-index:20;justify-content:space-between">
+    <button class="home-btn" onclick="goHome()" aria-label="Home">
+      <svg width="17" height="17" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M3 8.5L10 2.5l7 6V17a1 1 0 01-1 1H4a1 1 0 01-1-1V8.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M7.5 18v-5h5v5" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+      </svg>
+    </button>
     <div class="lang-toggle">
       <button class="lang-btn on" id="ko2" onclick="setLang('ko')">KO</button>
       <button class="lang-btn"    id="en2" onclick="setLang('en')">EN</button>
