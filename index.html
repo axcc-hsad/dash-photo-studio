@@ -508,6 +508,9 @@
       }
     }
 
+    /* mobile-only line break in footer */
+    @media (min-width: 768px) { .mob-br { display: none; } }
+
     /* ── Responsive: Desktop ─────────────────────── */
     @media (min-width: 768px) {
       :root { --panel-w: 700px; }
@@ -576,7 +579,7 @@
     </script>
   </div>
 
-  <div class="footer"><b>DASH FLOW</b> empowers HSAD teams to build<br>and design their own agents.</div>
+  <div class="footer"><b>DASH FLOW</b> empowers HSAD teams to build<br class="mob-br">and design their own agents.</div>
 </div>
 
 
@@ -632,7 +635,7 @@
   </div>
 
   <div class="footer" style="position:relative;z-index:10">
-    <b>DASH FLOW</b> empowers HSAD teams to build<br>and design their own agents.
+    <b>DASH FLOW</b> empowers HSAD teams to build<br class="mob-br">and design their own agents.
   </div>
 </div>
 
