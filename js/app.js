@@ -586,10 +586,8 @@ async function streamIdxBubble(lang) {
 
   const raw = (T[lang] || T.ko).idxMsg;
 
-  // Pre-render full text invisibly for one frame to lock the bubble height
-  el.style.visibility = 'hidden';
-  el.innerHTML = raw.replace(/\n/g, '<br>');
-  await delay(16);
+  // Lock bubble height synchronously (text already in DOM from HTML, just hidden)
+  // — no await here, so no repaint between measure → clear
   el.style.minHeight = el.offsetHeight + 'px';
   el.style.visibility = 'visible';
   el.innerHTML = '';
