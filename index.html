@@ -87,11 +87,20 @@
     /* ── Footer ──────────────────────────────────── */
     .footer {
       font-size: 11px; color: #aaa;
-      text-align: center; padding: 16px 20px;
+      text-align: center; padding: 10px 20px;
       position: relative; z-index: 10;
-      margin-top: auto;
+      flex-shrink: 0;
     }
     .footer b { color: var(--red); font-weight: 700; }
+
+    /* index footer: sits right below the robot */
+    #idx .footer { margin-top: 12px; }
+
+    /* chat footer: anchored to bottom via height:100vh flex */
+    #chat { height: 100vh; overflow: hidden; }
+    #chat .footer { margin-top: 0; }
+    #chat .chat-wrap { min-height: 0; padding-bottom: 0; }
+    #chat .chat-panel { max-height: none; }
 
     /* ════════════════════════════════════════════════
        01  INDEX
@@ -488,14 +497,8 @@
     /* ── Responsive: Desktop ─────────────────────── */
     @media (min-width: 768px) {
       :root { --panel-w: 700px; }
-      .chat-wrap { padding: 24px 24px 16px; }
-      .chat-panel { max-height: calc(100vh - 200px); }
+      #chat .chat-wrap { padding: 24px 24px 0; }
       .msg-bub { max-width: 86%; }
-    }
-
-    /* ── Responsive: Mobile footer fix ──────────── */
-    @media (max-width: 767px) {
-      .chat-panel { max-height: calc(100vh - 240px); }
     }
 
     /* ── Streaming cursor ────────────────────────── */
