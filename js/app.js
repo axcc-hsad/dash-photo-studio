@@ -592,6 +592,14 @@ async function streamIdxBubble(lang) {
 
   const raw = (T[lang] || T.ko).idxMsg;
 
+  // Wait for fonts (Inter) to load so measurement matches final rendered height
+  await document.fonts.ready;
+  if (myId !== _idxGenId) return;
+
+  // One extra frame so the browser has applied the loaded font to the element
+  await new Promise(r => requestAnimationFrame(r));
+  if (myId !== _idxGenId) return;
+
   // Fix the element to an exact height — cursor overflow is clipped, bubble never moves
   el.style.height   = el.offsetHeight + 'px';
   el.style.overflow = 'hidden';
