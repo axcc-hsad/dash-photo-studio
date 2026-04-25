@@ -219,12 +219,13 @@ async function onUrl(url) {
   S.pdpUrl = url;
   setBusy(true);
   showTyping();
-  await delay(1800);
+  await delay(600);
   hideTyping();
   await stream(t('analyzing'));
-  await delay(600);
+  showTyping();   // keep dots while actually fetching
 
-  const data = CONFIG.DEMO_MODE ? demoScrape(url) : await apiCall('scrape-pdp', {url}).catch(() => null);
+  const data = CONFIG.DEMO_MODE ? demoScrape(url) : await apiCall('scrape-pdp', {url}).catch(e => { console.error('scrape error:', e); return null; });
+  hideTyping();
   if (!data) { await stream(t('invalidUrl')); setBusy(false); return; }
 
   S.productName = data.productName;

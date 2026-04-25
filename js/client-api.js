@@ -14,17 +14,34 @@ async function apiCall(ep, body) {
 }
 
 // ══ SCRAPE LG PDP ════════════════════════════════════════════════
+// CORS proxies tried in order — first success wins
+const PROXIES = [
+  u => ({ url: `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, json: true }),
+  u => ({ url: `https://corsproxy.io/?${encodeURIComponent(u)}`,              json: false }),
+  u => ({ url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`, json: false }),
+];
+
 async function clientScrape(url) {
   if (!url.includes('lg.com')) throw new Error('Not an LG URL');
 
-  // Fetch via CORS proxy (allorigins returns HTML including __NEXT_DATA__)
-  const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-  const res = await fetch(proxyUrl);
-  if (!res.ok) throw new Error(`Proxy error: ${res.status}`);
-  const data = await res.json();
-  const html = data.contents;
-  if (!html) throw new Error('No content from proxy');
+  let html = null;
+  for (const makeProxy of PROXIES) {
+    try {
+      const { url: proxyUrl, json } = makeProxy(url);
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) continue;
+      if (json) {
+        const data = await res.json();
+        html = data.contents || null;
+      } else {
+        html = await res.text();
+      }
+      if (html && html.length > 2000) break;   // got real content
+      html = null;
+    } catch { continue; }
+  }
 
+  if (!html) throw new Error('All proxies failed — no content returned');
   return parseLGPage(html, url);
 }
 
