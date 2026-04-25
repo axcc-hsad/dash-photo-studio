@@ -592,11 +592,9 @@ async function streamIdxBubble(lang) {
 
   const raw = (T[lang] || T.ko).idxMsg;
 
-  // Lock bubble height synchronously (text already in DOM from HTML, just hidden)
-  // — no await here, so no repaint between measure → clear
-  // Add one line-height as buffer so the streaming cursor never pushes text to a new line
-  const lineH = parseFloat(getComputedStyle(el).lineHeight) || 24;
-  el.style.minHeight = (el.offsetHeight + lineH) + 'px';
+  // Fix the element to an exact height — cursor overflow is clipped, bubble never moves
+  el.style.height   = el.offsetHeight + 'px';
+  el.style.overflow = 'hidden';
   el.style.visibility = 'visible';
   el.innerHTML = '';
 
@@ -629,7 +627,8 @@ async function streamIdxBubble(lang) {
 
   if (myId !== _idxGenId) return;
   cursor.remove();
-  el.style.minHeight = '';  // release fixed height after streaming
+  el.style.height   = '';
+  el.style.overflow = '';
 }
 
 // ══ STREAMING TEXT ENGINE ════════════════════════════════════════
