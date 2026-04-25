@@ -325,12 +325,18 @@
     .img-card:hover { transform: scale(1.03); }
     .img-card.sel { border-color: var(--red); }
     .img-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
-    .img-card .img-badge {
+    /* Rank badges — gold / silver / bronze / others */
+    .img-card .img-rank {
       position: absolute; top: 5px; left: 5px;
-      background: var(--red); color: #fff;
       font-size: 9px; font-weight: 700;
-      padding: 2px 6px; border-radius: 8px;
+      padding: 2px 7px; border-radius: 8px;
+      color: #fff; white-space: nowrap;
+      letter-spacing: 0.02em;
     }
+    .img-card .rank-1 { background: #C8A000; }          /* gold   */
+    .img-card .rank-2 { background: #7A7A7A; }          /* silver */
+    .img-card .rank-3 { background: #7B4F2E; }          /* bronze */
+    .img-card .rank-other { background: rgba(0,0,0,0.32); }
     .img-card .img-score {
       font-size: 10px; color: #666;
       text-align: center; padding: 4px 4px 3px;

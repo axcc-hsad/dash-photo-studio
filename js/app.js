@@ -14,7 +14,12 @@ const T = {
     analyzing:   'URL을 분석하고 있습니다. 잠시만 기다려주세요.',
     invalidUrl:  '올바른 lg.com 제품 URL을 입력해주세요.\n예: https://www.lg.com/us/refrigerators/lg-LRMVS3006S',
 
-    foundImages: (n, name) => `제품 이미지 ${n}장을 확인했습니다.\n${name}\n합성 적합도 기준으로 1순위를 추천드립니다. 선택 후 진행해주세요.`,
+    foundImages: (n, name, features) => {
+      const feat = features && features.length
+        ? '\n\n주요 특징:\n' + features.map(f => `• ${f}`).join('\n') + '\n'
+        : '\n';
+      return `제품 이미지 ${n}장을 확인했습니다.\n${name}${feat}\n합성 적합도 기준으로 1순위를 추천드립니다. 선택 후 진행해주세요.`;
+    },
     btnPick:     '이 이미지로 진행',
 
     regionQ:     '게시할 인테리어 스타일을 선택해주세요.',
@@ -64,7 +69,12 @@ const T = {
     analyzing:   'Analyzing URL. Please wait a moment.',
     invalidUrl:  'Please enter a valid lg.com product URL.\nExample: https://www.lg.com/us/refrigerators/lg-LRMVS3006S',
 
-    foundImages: (n, name) => `Found ${n} product images.\n${name}\nRecommending the top-ranked for compositing. Please select one.`,
+    foundImages: (n, name, features) => {
+      const feat = features && features.length
+        ? '\n\nKey Features:\n' + features.map(f => `• ${f}`).join('\n') + '\n'
+        : '\n';
+      return `Found ${n} product images.\n${name}${feat}\nRecommending #1 for compositing. Please select one to proceed.`;
+    },
     btnPick:     'Proceed with this image',
 
     regionQ:     'Select the interior style for posting.',
@@ -127,6 +137,7 @@ const RATIO_DIMS = {
 const S = {
   lang:'ko', step:'IDLE', busy:false,
   pdpUrl:'', productName:'', productType:'fridge',
+  productFeatures:[],
   candidates:[], pickedIdx:0,
   region:'', ratio:'',
   genPrompt:'', resultUrl:'',
@@ -228,13 +239,14 @@ async function onUrl(url) {
   hideTyping();
   if (!data) { await stream(t('invalidUrl')); setBusy(false); return; }
 
-  S.productName = data.productName;
-  S.productType = data.productType;
-  S.candidates  = data.candidateImages;
-  S.pickedIdx   = 0;
+  S.productName    = data.productName;
+  S.productType    = data.productType;
+  S.productFeatures = data.productFeatures || [];
+  S.candidates     = data.candidateImages;
+  S.pickedIdx      = 0;
 
-  // stream intro text, then show image grid
-  await stream(t('foundImages', data.candidateImages.length, data.productName), () => {
+  // stream intro text (with features), then show image grid
+  await stream(t('foundImages', data.candidateImages.length, data.productName, S.productFeatures), () => {
     appendToLast(imageGrid());
   });
   setBusy(false);
@@ -248,32 +260,51 @@ function demoScrape(url) {
   const type = u.includes('fridge')||u.includes('refrigerator')||u.includes('lrmv') ? 'fridge'
     : u.includes('washer')||u.includes('wm') ? 'washer'
     : u.includes('tv')||u.includes('oled') ? 'tv' : 'appliance';
-  const names = {fridge:'LG LRMVS3006S French Door Refrigerator',washer:'LG WM4000HWA Front Load Washer',tv:'LG C3 OLED evo TV',appliance:'LG Appliance'};
-  const clr   = {fridge:['e0edf5','d0e2ef','bfd6e8'],washer:['ece8fb','ddd8f8','cdc8ef'],tv:['e8e8e8','dedede','d2d2d2'],appliance:['eee','e5e5e5','ddd']};
-  const icon  = {fridge:'🧊',washer:'🫧',tv:'📺',appliance:'📦'}[type];
+  const names    = {fridge:'LG LRMVS3006S French Door Refrigerator',washer:'LG WM4000HWA Front Load Washer',tv:'LG C3 OLED evo TV',appliance:'LG Appliance'};
+  const clr      = {fridge:['e0edf5','d0e2ef','bfd6e8','cce7f5','b8d4e5'],washer:['ece8fb','ddd8f8','cdc8ef','c0b8f0','b4aee8'],tv:['e8e8e8','dedede','d2d2d2','c6c6c6','bababa'],appliance:['eee','e5e5e5','ddd','d5d5d5','cdcdcd']};
+  const icon     = {fridge:'🧊',washer:'🫧',tv:'📺',appliance:'📦'}[type];
   const c = clr[type];
+  const featureMap = {
+    fridge:   ['InstaView Door-in-Door', 'Craft Ice Maker', 'Door Cooling+', 'ThinQ AI Connected'],
+    washer:   ['TurboWash 360°', '6Motion Technology', 'AI Wash Sensor', 'Steam+'],
+    tv:       ['OLED evo Panel', 'α9 AI Processor', 'Dolby Vision IQ', 'ThinQ AI'],
+    appliance:['Smart Diagnosis', 'Energy Star Certified', 'ThinQ AI Compatible'],
+  };
   return {
     productName: names[type], productType: type,
+    productFeatures: featureMap[type] || [],
     candidateImages: [
-      {url:`https://placehold.co/300x300/${c[0]}/555?text=${icon}+Front`,score:4.7,label:S.lang==='ko'?'정면 촬영':'Front View'},
-      {url:`https://placehold.co/300x300/${c[1]}/555?text=${icon}+Side`, score:4.0,label:S.lang==='ko'?'측면 촬영':'Side View'},
-      {url:`https://placehold.co/300x300/${c[2]}/555?text=${icon}+3/4`,  score:3.6,label:S.lang==='ko'?'3/4 구도':'3/4 View'},
+      {url:`https://placehold.co/300x300/${c[0]}/555?text=${icon}+Front`,  score:4.8, label:S.lang==='ko'?'정면 촬영':'Front View'},
+      {url:`https://placehold.co/300x300/${c[1]}/555?text=${icon}+Side`,   score:4.3, label:S.lang==='ko'?'측면 촬영':'Side View'},
+      {url:`https://placehold.co/300x300/${c[2]}/555?text=${icon}+3/4`,    score:4.0, label:S.lang==='ko'?'3/4 구도':'3/4 Angle'},
+      {url:`https://placehold.co/300x300/${c[3]}/555?text=${icon}+Detail`, score:3.7, label:S.lang==='ko'?'디테일':'Detail Shot'},
+      {url:`https://placehold.co/300x300/${c[4]}/555?text=${icon}+Life`,   score:3.5, label:S.lang==='ko'?'라이프스타일':'Lifestyle'},
     ],
   };
 }
 
 // ══ Image grid ═══════════════════════════════════════════════════
 function imageGrid() {
+  const items = S.candidates.slice(0, 5);
+  const rankLabel = S.lang === 'ko'
+    ? ['1순위 추천', '2순위', '3순위']
+    : ['#1 Pick',   '#2',    '#3'];
+
   const wrap = document.createElement('div');
   wrap.className = 'rich-block';
   wrap.innerHTML = `
     <div class="img-grid" id="igrid">
-      ${S.candidates.map((c,i) => `
-        <div class="img-card${i===0?' sel':''}" onclick="pickImg(${i},this)">
-          <img src="${c.url}" alt="${c.label}" loading="lazy"/>
-          ${i===0?`<span class="img-badge">★ Best</span>`:''}
-          <div class="img-score">${c.label} · ${c.score}★</div>
-        </div>`).join('')}
+      ${items.map((c, i) => {
+        const badge = i < 3
+          ? `<span class="img-rank rank-${i+1}">${rankLabel[i]}</span>`
+          : `<span class="img-rank rank-other">#${i+1}</span>`;
+        return `
+          <div class="img-card${i===0?' sel':''}" onclick="pickImg(${i},this)">
+            <img src="${c.url}" alt="${c.label}" loading="lazy"/>
+            ${badge}
+            <div class="img-score">${c.label}</div>
+          </div>`;
+      }).join('')}
     </div>
     <div class="act-row" style="margin-top:12px">
       <button class="act-btn primary" onclick="confirmImg()">${t('btnPick')}</button>
@@ -385,8 +416,11 @@ async function showPrompt() {
 function buildPrompt() {
   const s  = STYLES[S.region];
   const pt = PRODUCT_CTX[S.productType] || PRODUCT_CTX.appliance;
+  const featLine = S.productFeatures && S.productFeatures.length
+    ? `\nProduct highlights: ${S.productFeatures.slice(0, 3).join(', ')}.`
+    : '';
   return `Professional lifestyle interior photography of an LG ${S.productType}.
-Product: ${pt}.
+Product: ${pt}.${featLine}
 Setting: ${s.space}.
 Mood: ${s.mood}.
 Color palette: ${s.palette}.
@@ -575,7 +609,7 @@ function doDownload() {
 function doReset() {
   $msgs.innerHTML = ''; $hist.innerHTML = '';
   $hist.classList.remove('show');
-  Object.assign(S, {step:'IDLE',busy:false,pdpUrl:'',productName:'',productType:'fridge',candidates:[],pickedIdx:0,region:'',ratio:'',genPrompt:'',resultUrl:'',revisions:0,history:[]});
+  Object.assign(S, {step:'IDLE',busy:false,pdpUrl:'',productName:'',productType:'fridge',productFeatures:[],candidates:[],pickedIdx:0,region:'',ratio:'',genPrompt:'',resultUrl:'',revisions:0,history:[]});
   document.getElementById('chat').classList.remove('active');
   document.getElementById('idx').classList.add('active');
   streamIdxBubble(S.lang);          // ← re-animate bubble when returning to landing
