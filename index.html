@@ -335,6 +335,7 @@
     .sel-grid {
       display: grid; gap: 6px;
     }
+    .sel-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
     .sel-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
     .sel-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
 
@@ -349,6 +350,29 @@
     .sel-card .sc-icon { font-size: 18px; margin-bottom: 3px; }
     .sel-card .sc-label { font-size: 11px; font-weight: 600; color: var(--dark); }
     .sel-card .sc-sub { font-size: 10px; color: #999; margin-top: 1px; }
+
+    /* Interior style cards (region step) */
+    .sel-card.style-card {
+      padding: 10px 10px 12px;
+      text-align: left;
+    }
+    .sel-card.style-card .sc-label {
+      font-size: 12px; font-weight: 700;
+      color: var(--dark); margin-bottom: 3px;
+      letter-spacing: -0.01em;
+    }
+    .sel-card.style-card .sc-desc {
+      font-size: 10px; color: #888;
+      line-height: 1.45; margin-top: 1px;
+    }
+    .sc-palette {
+      display: flex; gap: 3px;
+      margin-bottom: 9px; border-radius: 6px;
+      overflow: hidden;
+    }
+    .sc-swatch {
+      flex: 1; height: 22px;
+    }
 
     /* Prompt preview */
     .prompt-wrap {

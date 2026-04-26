@@ -18,7 +18,7 @@ const T = {
     foundImages: (n, name) => `제품 이미지를 확인했습니다.\n${name}\n\n라이프스타일에 합성할 적합한 제품이미지를 선택해주세요.`,
     btnPick:     '이 이미지로 진행',
 
-    regionQ:     '게시할 인테리어 스타일을 선택해주세요.',
+    regionQ:     '인테리어 분위기를 선택해주세요.',
     ratioQ:      '이미지 비율을 선택해주세요.',
 
     promptIntro: '생성 프롬프트를 확인해주세요. 수정이 필요하면 직접 편집 후 진행하세요.',
@@ -44,10 +44,10 @@ const T = {
     btnReset:    '처음부터',
 
     regions: {
-      na:   { label:'북미',   sub:'Clean & Bright',   icon:'🇺🇸' },
-      eu:   { label:'유럽',   sub:'Minimal & Refined', icon:'🇪🇺' },
-      asia: { label:'아시아', sub:'Modern & Elegant',  icon:'🌏' },
-      la:   { label:'중남미', sub:'Warm & Natural',    icon:'🌎' },
+      na:   { label:'Clean & Bright',    desc:'빛이 가득한 모던 아메리칸 인테리어', palette:['#F8F6F2','#E4DDD2','#C8B99A','#A08060'] },
+      eu:   { label:'Minimal & Refined', desc:'차분하고 절제된 유러피안 무드',       palette:['#F2EDE6','#C4BAB0','#8C8278','#4A3C30'] },
+      asia: { label:'Modern & Elegant',  desc:'세련되고 깔끔한 아시안 컨템포러리',   palette:['#F8F8F6','#E8E0D4','#C0A88C','#7C6048'] },
+      la:   { label:'Warm & Natural',    desc:'따뜻하고 자연스러운 라틴 감성',       palette:['#F4E8CC','#C87844','#8C9050','#B47830'] },
     },
     ratios: {
       square:    { label:'정사각형', sub:'1 : 1',  icon:'⬛' },
@@ -69,7 +69,7 @@ const T = {
     foundImages: (n, name) => `Product images retrieved.\n${name}\n\nSelect the best image for lifestyle compositing.`,
     btnPick:     'Proceed with this image',
 
-    regionQ:     'Select the interior style for posting.',
+    regionQ:     'Choose an interior style.',
     ratioQ:      'Select the image ratio.',
 
     promptIntro: 'Review the generation prompt. Edit if needed, then confirm.',
@@ -95,10 +95,10 @@ const T = {
     btnReset:    'Start Over',
 
     regions: {
-      na:   { label:'N. America', sub:'Clean & Bright',   icon:'🇺🇸' },
-      eu:   { label:'Europe',     sub:'Minimal & Refined', icon:'🇪🇺' },
-      asia: { label:'Asia',       sub:'Modern & Elegant',  icon:'🌏' },
-      la:   { label:'Lat. Am.',   sub:'Warm & Natural',    icon:'🌎' },
+      na:   { label:'Clean & Bright',    desc:'Modern American — bright & airy',    palette:['#F8F6F2','#E4DDD2','#C8B99A','#A08060'] },
+      eu:   { label:'Minimal & Refined', desc:'European — calm, architectural',      palette:['#F2EDE6','#C4BAB0','#8C8278','#4A3C30'] },
+      asia: { label:'Modern & Elegant',  desc:'Asian Contemporary — clean & sleek',  palette:['#F8F8F6','#E8E0D4','#C0A88C','#7C6048'] },
+      la:   { label:'Warm & Natural',    desc:'Latin American — warm, earthy tones', palette:['#F4E8CC','#C87844','#8C9050','#B47830'] },
     },
     ratios: {
       square:    { label:'Square',    sub:'1 : 1',  icon:'⬛' },
@@ -325,12 +325,14 @@ async function showRegion() {
     const wrap = document.createElement('div');
     wrap.className = 'rich-block';
     wrap.innerHTML = `
-      <div class="sel-grid cols-4" id="rgrid">
+      <div class="sel-grid cols-2" id="rgrid">
         ${Object.entries(t('regions')).map(([k,v]) => `
-          <div class="sel-card" onclick="pickRegion('${k}',this)">
-            <div class="sc-icon">${v.icon}</div>
+          <div class="sel-card style-card" onclick="pickRegion('${k}',this)">
+            <div class="sc-palette">
+              ${v.palette.map(c => `<span class="sc-swatch" style="background:${c}"></span>`).join('')}
+            </div>
             <div class="sc-label">${v.label}</div>
-            <div class="sc-sub">${v.sub}</div>
+            <div class="sc-desc">${v.desc}</div>
           </div>`).join('')}
       </div>`;
     return wrap;
