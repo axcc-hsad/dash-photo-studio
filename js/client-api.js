@@ -138,8 +138,8 @@ async function jinaFetch(url) {
   const cdnRe = /(https?:\/\/(?:gscs-b2c\.lge\.com|[^\s]*lg\.com\/content\/dam)[^\s,)"'>]+\.(?:jpg|jpeg|png|webp)[^\s,)"'>]*)/gi;
   for (const m of markdown.matchAll(cdnRe)) images.push(m[1]);
 
-  // Extract features from markdown bullet points — skip cookie/nav junk
-  const JUNK = /cookie|privacy|consent|analytics|adverti|functional|necessary|social.?media|navigation|business|^\[/i;
+  // Extract features from markdown — skip cookie banners, nav menus, category lists
+  const JUNK = /cookie|privacy|consent|analytics|adverti|functional|necessary|social.?media|navigation|business|heating|cooling|computing|accessories|audio|video|open.?menu|sign.?in|log.?in|register|basket|cart|wishlist/i;
   const features = [];
   for (const m of markdown.matchAll(/^[-*•]\s+(.{10,150})$/gm)) {
     const txt = m[1].trim();
@@ -147,7 +147,8 @@ async function jinaFetch(url) {
     if (/^https?:/.test(txt))   continue;   // bare URLs
     if (/^!\[/.test(txt))       continue;   // markdown image
     if (/^\[/.test(txt))        continue;   // [x] checkboxes
-    if (JUNK.test(txt))         continue;   // cookie / nav items
+    if (/^[A-Z][a-z]+(\/[A-Z][a-z]+)+$/.test(txt)) continue;  // "TV/Audio/Video" nav patterns
+    if (JUNK.test(txt))         continue;
     features.push(txt);
   }
 
@@ -228,14 +229,17 @@ Required JSON:
 {
   "productName": "full product name as listed on the page",
   "productType": "fridge or washer or tv or appliance",
-  "productFeatures": ["key USP 1", "key USP 2", "key USP 3", "key USP 4", "key USP 5"],
+  "productFeatures": ["key spec 1", "key spec 2", "key spec 3", "key spec 4", "key spec 5"],
   "imageUrls": ["https://full-cdn-image-url.jpg"]
 }
 
-Notes:
-- productFeatures: up to 5 key selling points from the page (short phrases)
-- imageUrls: actual image URLs hosted on gscs-b2c.lge.com or lg.com (full absolute URLs)
-- If you cannot access the page, infer productType from the URL path and leave imageUrls empty`;
+Rules for productFeatures — extract REAL product key specs/USPs ONLY:
+✓ Good: "635L Total Capacity", "InstaView Door-in-Door", "Total No Frost", "A++ Energy Rating", "Craft Ice Maker"
+✗ Bad: navigation categories (TV/Audio, Appliances), cookie notices, generic phrases, site menu items
+Extract up to 5 specific technical specs or named features from the product page itself.
+
+For imageUrls: full absolute CDN URLs only (gscs-b2c.lge.com or lg.com/content/dam), max 8.
+If you cannot access the page, infer productType from the URL path and leave imageUrls empty.`;
 
   // Tool configurations to try in order
   const toolSets = [
@@ -382,13 +386,14 @@ async function buildResult(imgSet, productName, productType, productFeatures) {
     .slice(0, 12)
     .map(i => i.url);
 
-  // 3. Ask Gemini to pick the 5 best product shots (filter out spec drawings)
+  // 3. Gemini Vision: look at the actual images and pick the 5 best product shots
   let finalUrls = prescored;
-  if (prescored.length > 5) {
+  if (prescored.length > 0) {
     try {
-      finalUrls = await selectBestImages(prescored, productName, productType);
+      finalUrls = await filterByVision(prescored, productName, productType);
+      console.log('[DASH] Vision selection:', finalUrls.length, 'images kept');
     } catch (e) {
-      console.warn('[DASH] image selection fallback:', e.message);
+      console.warn('[DASH] Vision fallback:', e.message);
       finalUrls = prescored.slice(0, 5);
     }
   }
@@ -414,42 +419,51 @@ async function buildResult(imgSet, productName, productType, productFeatures) {
   };
 }
 
-// Ask Gemini to pick the best product shots from a list of URLs
-async function selectBestImages(urls, productName, productType) {
-  const key    = CONFIG.GEMINI_API_KEY;
-  const list   = urls.map((u, i) => `${i + 1}. ${u}`).join('\n');
-  const prompt = `You are a product photographer. Select the 5 best images for lifestyle interior compositing.
+// Gemini Vision: actually look at each image and classify it
+async function filterByVision(urls, productName, productType) {
+  const key   = CONFIG.GEMINI_API_KEY;
+  const batch = urls.slice(0, 10);
 
-Product: LG ${productType} — "${productName}"
+  // Build multi-image parts array
+  const parts = [
+    { text: `You are a product photographer selecting images for LG ${productType} lifestyle compositing.\nProduct: "${productName}"\n\nLook at each image below and classify it:` }
+  ];
 
-INCLUDE: clean product shots (white/plain background), hero shots, different angles.
-EXCLUDE: dimension drawings (contain measurement numbers), installation guides, spec sheets, any technical diagrams.
+  for (let i = 0; i < batch.length; i++) {
+    parts.push({ text: `\n[Image ${i + 1}]` });
+    parts.push({ fileData: { mimeType: 'image/jpeg', fileUri: batch[i] } });
+  }
 
-Return ONLY JSON — no other text:
-{"urls":["url1","url2","url3","url4","url5"]}
+  parts.push({ text: `\nFor EACH image, decide:
+- "keep" = clean product shot (white/plain/grey bg), different angles, detail shots → good for compositing
+- "keep" = lifestyle shot (product shown in a room) → acceptable
+- "drop" = dimension drawing, measurement diagram, installation guide, back panel, internal parts, spec sheet
 
-Candidate URLs:
-${list}`;
+Return ONLY JSON (no other text):
+{"keep":[1,2,3,4,5],"drop":[6,7]}
+
+List indices (1-based) of images to keep (max 5, best first) and images to drop.` });
 
   const res = await fetchT(
     `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
-    { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ contents:[{ parts:[{ text: prompt }] }] }) },
-    18000
+    { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts }] }) },
+    30000
   );
-  if (!res.ok) throw new Error(`Gemini select ${res.status}`);
+  if (!res.ok) throw new Error(`Vision HTTP ${res.status}`);
 
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const m    = text.match(/\{[\s\S]+?\}/);
-  if (!m) throw new Error('No JSON from Gemini select');
+  const data  = await res.json();
+  if (data.error) throw new Error(data.error.message);
 
-  const parsed   = JSON.parse(m[0]);
-  const selected = (parsed.urls || parsed.selected || [])
-    .filter(u => typeof u === 'string' && u.startsWith('http'));
+  const text  = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const m     = text.match(/\{[\s\S]+?\}/);
+  if (!m) throw new Error('No JSON from vision');
 
-  if (!selected.length) throw new Error('Empty selection');
-  return selected;
+  const parsed  = JSON.parse(m[0]);
+  const indices = (parsed.keep || []).filter(n => n >= 1 && n <= batch.length);
+  if (!indices.length) throw new Error('No kept images');
+
+  return indices.slice(0, 5).map(n => batch[n - 1]);
 }
 
 // URL-based filter: reject images that are clearly spec/dimension drawings

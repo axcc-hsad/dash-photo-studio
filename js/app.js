@@ -15,12 +15,7 @@ const T = {
     invalidUrl:  '올바른 lg.com 제품 URL을 입력해주세요.\n예: https://www.lg.com/us/refrigerators/lg-LRMVS3006S',
     noImages:    '제품 이미지를 불러오지 못했습니다. 잠시 후 다시 시도하거나 다른 URL을 입력해주세요.',
 
-    foundImages: (n, name, features) => {
-      const feat = features && features.length
-        ? '\n\n주요 특징:\n' + features.map(f => `• ${f}`).join('\n') + '\n'
-        : '\n';
-      return `제품 이미지 ${n}장을 확인했습니다.\n${name}${feat}\n합성 적합도 기준으로 1순위를 추천드립니다. 선택 후 진행해주세요.`;
-    },
+    foundImages: (n, name) => `제품 이미지를 확인했습니다.\n${name}\n\n라이프스타일에 합성할 적합한 제품이미지를 선택해주세요.`,
     btnPick:     '이 이미지로 진행',
 
     regionQ:     '게시할 인테리어 스타일을 선택해주세요.',
@@ -71,12 +66,7 @@ const T = {
     invalidUrl:  'Please enter a valid lg.com product URL.\nExample: https://www.lg.com/us/refrigerators/lg-LRMVS3006S',
     noImages:    'Could not load product images. Please try again or use a different URL.',
 
-    foundImages: (n, name, features) => {
-      const feat = features && features.length
-        ? '\n\nKey Features:\n' + features.map(f => `• ${f}`).join('\n') + '\n'
-        : '\n';
-      return `Found ${n} product images.\n${name}${feat}\nRecommending #1 for compositing. Please select one to proceed.`;
-    },
+    foundImages: (n, name) => `Product images retrieved.\n${name}\n\nSelect the best image for lifestyle compositing.`,
     btnPick:     'Proceed with this image',
 
     regionQ:     'Select the interior style for posting.',
@@ -258,8 +248,8 @@ async function onUrl(url) {
   S.candidates     = data.candidateImages;
   S.pickedIdx      = 0;
 
-  // stream intro text (with features), then show image grid
-  await stream(t('foundImages', data.candidateImages.length, data.productName, S.productFeatures), () => {
+  // stream intro text, then show image grid
+  await stream(t('foundImages', data.candidateImages.length, data.productName), () => {
     appendToLast(imageGrid());
   });
   setBusy(false);
@@ -299,25 +289,15 @@ function demoScrape(url) {
 // ══ Image grid ═══════════════════════════════════════════════════
 function imageGrid() {
   const items = S.candidates.slice(0, 5);
-  const rankLabel = S.lang === 'ko'
-    ? ['1순위 추천', '2순위', '3순위']
-    : ['#1 Pick',   '#2',    '#3'];
-
-  const wrap = document.createElement('div');
+  const wrap  = document.createElement('div');
   wrap.className = 'rich-block';
   wrap.innerHTML = `
     <div class="img-grid" id="igrid">
-      ${items.map((c, i) => {
-        const badge = i < 3
-          ? `<span class="img-rank rank-${i+1}">${rankLabel[i]}</span>`
-          : `<span class="img-rank rank-other">#${i+1}</span>`;
-        return `
-          <div class="img-card${i===0?' sel':''}" onclick="pickImg(${i},this)">
-            <img src="${c.url}" alt="${c.label}" loading="lazy"/>
-            ${badge}
-            <div class="img-score">${c.label}</div>
-          </div>`;
-      }).join('')}
+      ${items.map((c, i) => `
+        <div class="img-card${i===0?' sel':''}" onclick="pickImg(${i},this)">
+          <img src="${c.url}" alt="${c.label}" loading="lazy"/>
+          <div class="img-score">${c.label}</div>
+        </div>`).join('')}
     </div>
     <div class="act-row" style="margin-top:12px">
       <button class="act-btn primary" onclick="confirmImg()">${t('btnPick')}</button>
