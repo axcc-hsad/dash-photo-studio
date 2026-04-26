@@ -296,10 +296,9 @@ function imageGrid() {
       ${items.map((c, i) => `
         <div class="img-card${i===0?' sel':''}" onclick="pickImg(${i},this)">
           <img src="${c.url}" alt="${c.label}" loading="lazy"/>
-          <div class="img-score">${c.label}</div>
         </div>`).join('')}
     </div>
-    <div class="act-row" style="margin-top:12px">
+    <div class="act-row" style="margin-top:12px;justify-content:center">
       <button class="act-btn primary" onclick="confirmImg()">${t('btnPick')}</button>
     </div>`;
   return wrap;
