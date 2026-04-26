@@ -131,7 +131,7 @@ const S = {
   pdpUrl:'', productName:'', productType:'fridge',
   productFeatures:[],
   candidates:[], pickedIdx:0,
-  region:'', ratio:'',
+  region:'', ratio:'square',   // 비율 고정 (기본값: 1:1)
   genPrompt:'', resultUrl:'',
   revisions:0, maxRev:2, history:[],
 };
@@ -348,40 +348,6 @@ function pickRegion(k, el) {
   freezeButtons();
   setTimeout(() => {
     userSay(t('regions')[k].label);
-    S.step = 'RATIO';
-    updateInputBar();
-    showRatio();
-  }, 350);
-}
-
-// ══ Ratio ════════════════════════════════════════════════════════
-async function showRatio() {
-  setBusy(true);
-  await stream(t('ratioQ'), () => {
-    const wrap = document.createElement('div');
-    wrap.className = 'rich-block';
-    wrap.innerHTML = `
-      <div class="sel-grid cols-3" id="rtgrid">
-        ${Object.entries(t('ratios')).map(([k,v]) => `
-          <div class="sel-card" onclick="pickRatio('${k}',this)">
-            <div class="sc-icon">${v.icon}</div>
-            <div class="sc-label">${v.label}</div>
-            <div class="sc-sub">${v.sub}</div>
-          </div>`).join('')}
-      </div>`;
-    return wrap;
-  });
-  setBusy(false);
-}
-
-function pickRatio(k, el) {
-  if (S.step !== 'RATIO') return;   // guard
-  S.ratio = k;
-  document.querySelectorAll('#rtgrid .sel-card').forEach(c => c.classList.remove('sel'));
-  el.classList.add('sel');
-  freezeButtons();
-  setTimeout(() => {
-    userSay(t('ratios')[k].label);
     S.step = 'GEN_READY';
     updateInputBar();
     showGenerateBtn();
@@ -412,15 +378,15 @@ function buildPrompt() {
   const featLine = S.productFeatures && S.productFeatures.length
     ? `\nProduct highlights: ${S.productFeatures.slice(0, 3).join(', ')}.`
     : '';
-  return `Professional lifestyle interior photography of an LG ${S.productType}.
-Product: ${pt}.${featLine}
-Setting: ${s.space}.
+  return `Create a professional lifestyle interior photo for an LG ${S.productType} advertisement.
+Place the product (${pt}) naturally in a ${s.space}.${featLine}
 Mood: ${s.mood}.
 Color palette: ${s.palette}.
 Lighting: ${s.light}.
-Props: ${s.props}.
+Styling props: ${s.props}.
 Avoid: ${s.avoid}.
-The product is the clear hero. No people. Photorealistic, high quality, commercial photography.`;
+The product must be the clear hero — fully visible, undistorted, front-facing.
+No people. Photorealistic, high-end commercial photography quality.`;
 }
 
 // ══ Generation ═══════════════════════════════════════════════════
@@ -442,12 +408,22 @@ async function startGen() {
     imgUrl = `https://placehold.co/${dims}/${col}?text=DASH+${S.productType}+${S.region.toUpperCase()}`;
     qc = {a:94,b:88,c:91,d:85};
   } else {
+    let genErr = null;
     const res = await apiCall('generate-image',{
-      productImageUrl:S.candidates[S.pickedIdx].url,
-      productType:S.productType, region:S.region,
-      ratio:S.ratio, prompt:S.genPrompt,
-    }).catch(()=>null);
-    if (!res) { hideTyping(); setBusy(false); return; }
+      productImageUrl: S.candidates[S.pickedIdx].url,
+      productType: S.productType, region: S.region,
+      ratio: S.ratio, prompt: S.genPrompt,
+    }).catch(e => { genErr = e; console.error('[DASH] generate-image error:', e); return null; });
+    if (!res) {
+      hideTyping();
+      const msg = S.lang === 'ko'
+        ? `이미지 생성에 실패했습니다. 다시 시도해주세요.\n(${genErr?.message || '알 수 없는 오류'})`
+        : `Image generation failed. Please try again.\n(${genErr?.message || 'Unknown error'})`;
+      await stream(msg);
+      S.step = 'GEN_READY';
+      setBusy(false);
+      return;
+    }
     imgUrl = res.imageUrl;
     const qs = res.qcScores||{};
     qc = {a:qs.productIntegrity||90, b:qs.naturalProportions||87, c:qs.backgroundHarmony||89, d:qs.regionalStyleMatch||84};
@@ -582,7 +558,7 @@ function doDownload() {
 function doReset() {
   $msgs.innerHTML = ''; $hist.innerHTML = '';
   $hist.classList.remove('show');
-  Object.assign(S, {step:'IDLE',busy:false,pdpUrl:'',productName:'',productType:'fridge',productFeatures:[],candidates:[],pickedIdx:0,region:'',ratio:'',genPrompt:'',resultUrl:'',revisions:0,history:[]});
+  Object.assign(S, {step:'IDLE',busy:false,pdpUrl:'',productName:'',productType:'fridge',productFeatures:[],candidates:[],pickedIdx:0,region:'',ratio:'square',genPrompt:'',resultUrl:'',revisions:0,history:[]});
   document.getElementById('chat').classList.remove('active');
   document.getElementById('idx').classList.add('active');
   streamIdxBubble(S.lang);          // ← re-animate bubble when returning to landing

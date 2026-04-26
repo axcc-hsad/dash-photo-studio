@@ -15,7 +15,7 @@ const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 // ── apiCall router ────────────────────────────────────────────────
 async function apiCall(ep, body) {
   if (ep === 'scrape-pdp')     return clientScrape(body.url);
-  if (ep === 'generate-image') return clientGenerateImage(body.productType, body.region, body.ratio, body.prompt);
+  if (ep === 'generate-image') return clientGenerateImage(body.productImageUrl, body.productType, body.region, body.ratio, body.prompt);
   throw new Error(`Unknown endpoint: ${ep}`);
 }
 
@@ -549,34 +549,69 @@ function collectFeat(obj, set, depth) {
 }
 
 // ══ GENERATE IMAGE via Gemini ════════════════════════════════════
-async function clientGenerateImage(productType, region, ratio, prompt) {
+async function clientGenerateImage(productImageUrl, productType, region, ratio, prompt) {
   const key = CONFIG.GEMINI_API_KEY;
 
+  // ── 1. 제품 이미지를 base64로 변환 (합성용) ──────────────────────
+  let productB64  = null;
+  let productMime = 'image/jpeg';
+  if (productImageUrl) {
+    try {
+      const { b64, mime } = await fetchImageAsBase64(productImageUrl);
+      productB64  = b64;
+      productMime = mime;
+      console.log('[DASH] product image fetched for compositing');
+    } catch (e) {
+      console.warn('[DASH] product image fetch failed, text-only fallback:', e.message);
+    }
+  }
+
+  // ── 2. Gemini contents 구성 ───────────────────────────────────
+  const parts = [];
+  if (productB64) {
+    // 이미지 + 합성 지시 프롬프트
+    parts.push({ inlineData: { mimeType: productMime, data: productB64 } });
+    parts.push({ text: `This is an LG ${productType} product photo on a plain background.\n${prompt}\nKeep the product exactly as shown in the photo — same model, same color, same proportions. Place it naturally as the hero of the scene.` });
+  } else {
+    // 이미지 없을 때 텍스트만
+    parts.push({ text: prompt });
+  }
+
+  // ── 3. 이미지 생성 요청 ──────────────────────────────────────
   const genRes = await fetchT(
     `${GEMINI_BASE}/gemini-2.0-flash-exp-image-generation:generateContent?key=${key}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [{ parts }],
         generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
       }),
     },
-    60000
+    90000   // 합성은 시간이 더 걸릴 수 있어 90s
   );
-  if (!genRes.ok) throw new Error(`Gemini image ${genRes.status}`);
+
+  if (!genRes.ok) {
+    const errTxt = await genRes.text().catch(() => '');
+    throw new Error(`Gemini image HTTP ${genRes.status}: ${errTxt.slice(0, 120)}`);
+  }
   const genData = await genRes.json();
 
-  const parts = genData.candidates?.[0]?.content?.parts ?? [];
+  // ── 4. 이미지 추출 ───────────────────────────────────────────
+  const resParts = genData.candidates?.[0]?.content?.parts ?? [];
   let imageUrl = null;
-  for (const part of parts) {
+  for (const part of resParts) {
     if (part.inlineData?.data) {
       imageUrl = `data:${part.inlineData.mimeType || 'image/jpeg'};base64,${part.inlineData.data}`;
       break;
     }
   }
-  if (!imageUrl) throw new Error('No image returned from Gemini');
+  if (!imageUrl) {
+    const reason = genData.candidates?.[0]?.finishReason || JSON.stringify(genData).slice(0, 100);
+    throw new Error(`Gemini returned no image. Reason: ${reason}`);
+  }
 
+  // ── 5. QC ────────────────────────────────────────────────────
   let qcScores = { productIntegrity: 88, naturalProportions: 85, backgroundHarmony: 87, regionalStyleMatch: 83 };
   try {
     const base64 = imageUrl.split(',')[1];
@@ -585,6 +620,59 @@ async function clientGenerateImage(productType, region, ratio, prompt) {
   } catch {}
 
   return { imageUrl, qcScores };
+}
+
+// ── 제품 이미지 URL → base64 변환 ─────────────────────────────────
+// 직접 fetch → CORS 프록시 순으로 시도
+async function fetchImageAsBase64(url) {
+  // 1. 직접 fetch
+  try {
+    const res = await fetchT(url, {}, 12000);
+    if (res.ok) {
+      const blob = await res.blob();
+      const mime = blob.type || guessMime(url);
+      return { b64: await blobToBase64(blob), mime };
+    }
+  } catch {}
+
+  // 2. allorigins raw proxy
+  try {
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    const res = await fetchT(proxyUrl, {}, 12000);
+    if (res.ok) {
+      const blob = await res.blob();
+      const mime = guessMime(url);
+      return { b64: await blobToBase64(blob), mime };
+    }
+  } catch {}
+
+  // 3. corsproxy.io
+  try {
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+    const res = await fetchT(proxyUrl, {}, 12000);
+    if (res.ok) {
+      const blob = await res.blob();
+      const mime = guessMime(url);
+      return { b64: await blobToBase64(blob), mime };
+    }
+  } catch {}
+
+  throw new Error('All image fetch attempts failed');
+}
+
+function guessMime(url) {
+  if (/\.png/i.test(url))  return 'image/png';
+  if (/\.webp/i.test(url)) return 'image/webp';
+  return 'image/jpeg';
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function clientQC(key, base64, mime, productType, region) {
