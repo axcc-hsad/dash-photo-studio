@@ -164,49 +164,52 @@ async function jinaFetch(url) {
 
 // ══ B. CDN PATTERN PROBING ════════════════════════════════════════
 // Uses browser Image() — no CORS restriction on image loading
+// IMPORTANT: never probe D* patterns (D01.jpg = Dimension drawing)
+// Limit to slots 1-5 only — slot 6+ are usually spec/back images
 async function cdnProbe(info, imgSet) {
   const { market, category, slug, modelRaw, modelBase } = info;
   if (!slug) return;
 
-  const probes    = [];
-  const models    = [...new Set([modelRaw, modelBase].filter(m => m && m.length >= 4))];
-  const exts      = ['jpg', 'jpeg', 'png', 'webp'];
-  const mkSufx    = ['', '_AEK', '_AEK2', '_AEKQ', '_MEA', '_MEAU', '_AU', '_CA', '_US', '_MFL'];
+  const probes = [];
+  // Prefer modelBase (no variant suffix) to reduce duplicates
+  // Also try modelRaw in case CDN uses the full slug
+  const models = [...new Set([modelBase, modelRaw].filter(m => m && m.length >= 4))];
+  // Market suffixes for EU/US/Asia CDN filenames
+  const mkSufx = ['_AEK', '_AEKQ', '_AEK2', '_MEA', '_AU', '_CA', '_US', ''];
 
-  // ── LG content/dam gallery (EU / UK / Asia format) ───────────
-  for (let n = 1; n <= 9; n++) {
+  // ── LG content/dam gallery (EU/UK/Asia): medium01–05 ONLY ────
+  // DO NOT probe D01, D02 etc. — those are Dimension drawings
+  for (let n = 1; n <= 5; n++) {
     const pad = String(n).padStart(2, '0');
-    for (const ext of ['jpg', 'jpeg', 'png']) {
-      [
+    for (const ext of ['jpg', 'png']) {
+      probes.push(probe(
         `https://www.lg.com/content/dam/channel/wcms/${market}/images/${category}/${slug}/gallery/medium${pad}.${ext}`,
-        `https://www.lg.com/content/dam/channel/wcms/${market}/images/${category}/${slug}/gallery/D${pad}.${ext}`,
-        `https://www.lg.com/content/dam/channel/wcms/${market}/images/${category}/${slug}/${slug}_${pad}.${ext}`,
-      ].forEach(u => probes.push(probe(u, imgSet)));
+        imgSet
+      ));
     }
   }
 
-  // ── gscs-b2c.lge.com goldimage (US / global CDN) ─────────────
+  // ── gscs-b2c.lge.com goldimage CDN (global): slots 1-5 only ─
   for (const model of models) {
-    for (let n = 1; n <= 7; n++) {
+    for (let n = 1; n <= 5; n++) {
       for (const sfx of mkSufx) {
-        const variants = [
+        probes.push(probe(
           `https://gscs-b2c.lge.com/lglib/goldimage/${model}/${model}${sfx}_${n}.jpg`,
-          `https://gscs-b2c.lge.com/lglib/goldimage/${model}/01/${model}${sfx}_${n}.jpg`,
-        ];
-        variants.forEach(u => probes.push(probe(u, imgSet)));
+          imgSet
+        ));
       }
     }
   }
 
-  // ── US content/dam gallery ────────────────────────────────────
+  // ── US content/dam gallery: medium01–05 ──────────────────────
   for (const model of models) {
     const lm = model.toLowerCase();
-    for (let n = 1; n <= 6; n++) {
+    for (let n = 1; n <= 5; n++) {
       const pad = String(n).padStart(2, '0');
-      [
+      probes.push(probe(
         `https://www.lg.com/content/dam/channel/wcms/us/images/${category}/lg-${lm}/gallery/medium${pad}.jpg`,
-        `https://www.lg.com/content/dam/channel/wcms/us/images/${category}/${lm}/gallery/medium${pad}.jpg`,
-      ].forEach(u => probes.push(probe(u, imgSet)));
+        imgSet
+      ));
     }
   }
 
@@ -371,7 +374,7 @@ async function parseHtml(html, url, info, name, type, feat) {
 
 // ══ RESULT BUILDER ════════════════════════════════════════════════
 async function buildResult(imgSet, productName, productType, productFeatures) {
-  // 1. Hard-filter obvious bad images
+  // 1. Hard-filter obvious bad images by URL pattern
   const pool = [...imgSet]
     .filter(imgUrl)
     .filter(u => !isSpecImage(u))
@@ -379,24 +382,15 @@ async function buildResult(imgSet, productName, productType, productFeatures) {
     .filter(u => !/[_-]\d{2,3}x\d{2,3}[_.-]/i.test(u))
     .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u));
 
-  // 2. Score & take top 12 candidates for Gemini review
-  const prescored = pool
-    .map(u => ({ url: u, score: lgScore(u) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 12)
-    .map(i => i.url);
+  // 2. Deduplicate: same slot number = same physical image from different CDNs
+  //    e.g. medium01.jpg + GSXV80PZLE_AEK_1.jpg → keep highest-scored URL for slot 1
+  const deduped = deduplicateBySlot(pool);   // returns slots 1-5, sorted by slot
+  console.log('[DASH] After dedup:', deduped.length, 'unique images');
 
-  // 3. Gemini Vision: look at the actual images and pick the 5 best product shots
-  let finalUrls = prescored;
-  if (prescored.length > 0) {
-    try {
-      finalUrls = await filterByVision(prescored, productName, productType);
-      console.log('[DASH] Vision selection:', finalUrls.length, 'images kept');
-    } catch (e) {
-      console.warn('[DASH] Vision fallback:', e.message);
-      finalUrls = prescored.slice(0, 5);
-    }
-  }
+  // 3. If still > 5 (shouldn't happen after dedup), take top 5 by score
+  const finalUrls = deduped.length > 5
+    ? deduped.sort((a, b) => lgScore(b) - lgScore(a)).slice(0, 5)
+    : deduped;
 
   const VIEW_LABELS = ['Front View', 'Side View', '3/4 Angle', 'Detail Shot', 'Lifestyle'];
   const QC_SCORES   = [4.8, 4.3, 4.0, 3.7, 3.5];
@@ -419,56 +413,42 @@ async function buildResult(imgSet, productName, productType, productFeatures) {
   };
 }
 
-// Gemini Vision: actually look at each image and classify it
-async function filterByVision(urls, productName, productType) {
-  const key   = CONFIG.GEMINI_API_KEY;
-  const batch = urls.slice(0, 10);
+// Extract a "slot number" from a URL (1 = first product shot, 5 = fifth, 99 = unknown/bad)
+// LG CDN convention: medium01 / _AEK_1 / _1 → slot 1; D01 → dimension (99)
+function slotIndex(url) {
+  const filename = url.split('/').pop().split('?')[0];
+  // D01.jpg, D02.jpg etc. → dimension images, never show
+  if (/^[Dd]\d+\./i.test(filename)) return 99;
+  // Extract trailing number before extension: medium03 → 3, GSXV80PZLE_AEK_2.jpg → 2
+  const m = filename.match(/(\d+)\.[a-z]{2,4}$/i);
+  return m ? parseInt(m[1], 10) : 99;
+}
 
-  // Build multi-image parts array
-  const parts = [
-    { text: `You are a product photographer selecting images for LG ${productType} lifestyle compositing.\nProduct: "${productName}"\n\nLook at each image below and classify it:` }
-  ];
-
-  for (let i = 0; i < batch.length; i++) {
-    parts.push({ text: `\n[Image ${i + 1}]` });
-    parts.push({ fileData: { mimeType: 'image/jpeg', fileUri: batch[i] } });
+// Keep best-scored URL per slot; discard slots > 5 and D* images
+function deduplicateBySlot(urls) {
+  const slots = new Map(); // slot# → best URL
+  for (const url of urls) {
+    const slot = slotIndex(url);
+    if (slot > 5 || slot === 99) continue;
+    const existing = slots.get(slot);
+    if (!existing || lgScore(url) > lgScore(existing)) {
+      slots.set(slot, url);
+    }
   }
-
-  parts.push({ text: `\nFor EACH image, decide:
-- "keep" = clean product shot (white/plain/grey bg), different angles, detail shots → good for compositing
-- "keep" = lifestyle shot (product shown in a room) → acceptable
-- "drop" = dimension drawing, measurement diagram, installation guide, back panel, internal parts, spec sheet
-
-Return ONLY JSON (no other text):
-{"keep":[1,2,3,4,5],"drop":[6,7]}
-
-List indices (1-based) of images to keep (max 5, best first) and images to drop.` });
-
-  const res = await fetchT(
-    `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts }] }) },
-    30000
-  );
-  if (!res.ok) throw new Error(`Vision HTTP ${res.status}`);
-
-  const data  = await res.json();
-  if (data.error) throw new Error(data.error.message);
-
-  const text  = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const m     = text.match(/\{[\s\S]+?\}/);
-  if (!m) throw new Error('No JSON from vision');
-
-  const parsed  = JSON.parse(m[0]);
-  const indices = (parsed.keep || []).filter(n => n >= 1 && n <= batch.length);
-  if (!indices.length) throw new Error('No kept images');
-
-  return indices.slice(0, 5).map(n => batch[n - 1]);
+  // Return in slot order (1, 2, 3, 4, 5) — front view first
+  return [...slots.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, url]) => url);
 }
 
 // URL-based filter: reject images that are clearly spec/dimension drawings
 function isSpecImage(url) {
-  return /dimension|install(?:ation)?|spec[_-]|schematic|diagram|drawing|manual|_[Dd]\d+\.|technical|measure/i.test(url);
+  if (/dimension|install(?:ation)?|spec[_-]|schematic|diagram|drawing|manual|technical|measure/i.test(url)) return true;
+  // /gallery/D01.jpg, /gallery/D02.jpg → Dimension
+  if (/\/[Dd]\d+\.[a-z]{2,4}/i.test(url)) return true;
+  // _D1.jpg, _D2.jpg
+  if (/_[Dd]\d+\.[a-z]{2,4}$/i.test(url.split('/').pop())) return true;
+  return false;
 }
 
 // Remove market suffix from product name: "... | LG UK" → "..."
