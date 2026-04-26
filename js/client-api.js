@@ -84,7 +84,7 @@ async function clientScrape(url) {
     throw new Error('NO_IMAGES: Could not retrieve product images');
   }
 
-  return buildResult(imgs, name, type, feat);
+  return await buildResult(imgs, name, type, feat);
 }
 
 // ══ A. JINA.AI READER ════════════════════════════════════════════
@@ -138,15 +138,24 @@ async function jinaFetch(url) {
   const cdnRe = /(https?:\/\/(?:gscs-b2c\.lge\.com|[^\s]*lg\.com\/content\/dam)[^\s,)"'>]+\.(?:jpg|jpeg|png|webp)[^\s,)"'>]*)/gi;
   for (const m of markdown.matchAll(cdnRe)) images.push(m[1]);
 
-  // Extract features from markdown bullet points
+  // Extract features from markdown bullet points — skip cookie/nav junk
+  const JUNK = /cookie|privacy|consent|analytics|adverti|functional|necessary|social.?media|navigation|business|^\[/i;
   const features = [];
-  for (const m of markdown.matchAll(/^[-*•]\s+(.{10,120})$/gm)) {
+  for (const m of markdown.matchAll(/^[-*•]\s+(.{10,150})$/gm)) {
     const txt = m[1].trim();
-    if (features.length < 6 && !/^https?:/.test(txt) && !/^!\[/.test(txt)) features.push(txt);
+    if (features.length >= 6) break;
+    if (/^https?:/.test(txt))   continue;   // bare URLs
+    if (/^!\[/.test(txt))       continue;   // markdown image
+    if (/^\[/.test(txt))        continue;   // [x] checkboxes
+    if (JUNK.test(txt))         continue;   // cookie / nav items
+    features.push(txt);
   }
 
+  // Clean title: remove "| LG XX" market suffix
+  const cleanTitle = (title || '').replace(/\s*[\|–-]\s*LG\s+\w+\s*$/i, '').trim();
+
   return {
-    title:    title || '',
+    title:    cleanTitle,
     images:   [...new Set(images)].filter(imgUrl),
     features,
   };
@@ -353,33 +362,104 @@ async function parseHtml(html, url, info, name, type, feat) {
   // Features from __NEXT_DATA__ if not already set
   if (!feat.length && nextData) { const fs = new Set(); collectFeat(nextData, fs, 0); feat = [...fs].slice(0, 5); }
 
-  return buildResult(imgs, name || info.displayName, type || info.productType, feat);
+  return await buildResult(imgs, name || info.displayName, type || info.productType, feat);
 }
 
 // ══ RESULT BUILDER ════════════════════════════════════════════════
-function buildResult(imgSet, productName, productType, productFeatures) {
-  const scored = [...imgSet]
+async function buildResult(imgSet, productName, productType, productFeatures) {
+  // 1. Hard-filter obvious bad images
+  const pool = [...imgSet]
     .filter(imgUrl)
+    .filter(u => !isSpecImage(u))
     .filter(u => !/\d{1,2}x\d{1,2}(?!\d)/.test(u))
     .filter(u => !/[_-]\d{2,3}x\d{2,3}[_.-]/i.test(u))
-    .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u))
+    .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u));
+
+  // 2. Score & take top 12 candidates for Gemini review
+  const prescored = pool
     .map(u => ({ url: u, score: lgScore(u) }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+    .slice(0, 12)
+    .map(i => i.url);
+
+  // 3. Ask Gemini to pick the 5 best product shots (filter out spec drawings)
+  let finalUrls = prescored;
+  if (prescored.length > 5) {
+    try {
+      finalUrls = await selectBestImages(prescored, productName, productType);
+    } catch (e) {
+      console.warn('[DASH] image selection fallback:', e.message);
+      finalUrls = prescored.slice(0, 5);
+    }
+  }
 
   const VIEW_LABELS = ['Front View', 'Side View', '3/4 Angle', 'Detail Shot', 'Lifestyle'];
   const QC_SCORES   = [4.8, 4.3, 4.0, 3.7, 3.5];
 
-  const candidateImages = scored.length
-    ? scored.map((item, i) => ({ url: item.url, label: VIEW_LABELS[i] || `View ${i+1}`, score: QC_SCORES[i] || 3.0 }))
-    : [{ url: 'https://placehold.co/400x400/eee/555?text=No+Image', label: 'Product', score: 3.0 }];
+  const candidateImages = finalUrls.slice(0, 5).map((url, i) => ({
+    url,
+    label: VIEW_LABELS[i] || `View ${i + 1}`,
+    score: QC_SCORES[i]  || 3.0,
+  }));
+
+  if (!candidateImages.length) {
+    candidateImages.push({ url: 'https://placehold.co/400x400/eee/555?text=No+Image', label: 'Product', score: 3.0 });
+  }
 
   return {
-    productName:     productName || 'LG Product',
+    productName:     cleanName(productName) || 'LG Product',
     productType:     productType || 'appliance',
     candidateImages,
     productFeatures: (productFeatures || []).filter(f => typeof f === 'string' && f.length > 3),
   };
+}
+
+// Ask Gemini to pick the best product shots from a list of URLs
+async function selectBestImages(urls, productName, productType) {
+  const key    = CONFIG.GEMINI_API_KEY;
+  const list   = urls.map((u, i) => `${i + 1}. ${u}`).join('\n');
+  const prompt = `You are a product photographer. Select the 5 best images for lifestyle interior compositing.
+
+Product: LG ${productType} — "${productName}"
+
+INCLUDE: clean product shots (white/plain background), hero shots, different angles.
+EXCLUDE: dimension drawings (contain measurement numbers), installation guides, spec sheets, any technical diagrams.
+
+Return ONLY JSON — no other text:
+{"urls":["url1","url2","url3","url4","url5"]}
+
+Candidate URLs:
+${list}`;
+
+  const res = await fetchT(
+    `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
+    { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ contents:[{ parts:[{ text: prompt }] }] }) },
+    18000
+  );
+  if (!res.ok) throw new Error(`Gemini select ${res.status}`);
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const m    = text.match(/\{[\s\S]+?\}/);
+  if (!m) throw new Error('No JSON from Gemini select');
+
+  const parsed   = JSON.parse(m[0]);
+  const selected = (parsed.urls || parsed.selected || [])
+    .filter(u => typeof u === 'string' && u.startsWith('http'));
+
+  if (!selected.length) throw new Error('Empty selection');
+  return selected;
+}
+
+// URL-based filter: reject images that are clearly spec/dimension drawings
+function isSpecImage(url) {
+  return /dimension|install(?:ation)?|spec[_-]|schematic|diagram|drawing|manual|_[Dd]\d+\.|technical|measure/i.test(url);
+}
+
+// Remove market suffix from product name: "... | LG UK" → "..."
+function cleanName(name) {
+  return (name || '').replace(/\s*[\|–\-]\s*LG\s+\w[\w\s]*$/i, '').trim();
 }
 
 // ══ URL PARSER ════════════════════════════════════════════════════
