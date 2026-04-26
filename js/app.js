@@ -44,10 +44,10 @@ const T = {
     btnReset:    '처음부터',
 
     regions: {
-      na:   { label:'Clean & Bright',    desc:'빛이 가득한 모던 아메리칸 인테리어', palette:['#F8F6F2','#E4DDD2','#C8B99A','#A08060'] },
-      eu:   { label:'Minimal & Refined', desc:'차분하고 절제된 유러피안 무드',       palette:['#F2EDE6','#C4BAB0','#8C8278','#4A3C30'] },
-      asia: { label:'Modern & Elegant',  desc:'세련되고 깔끔한 아시안 컨템포러리',   palette:['#F8F8F6','#E8E0D4','#C0A88C','#7C6048'] },
-      la:   { label:'Warm & Natural',    desc:'따뜻하고 자연스러운 라틴 감성',       palette:['#F4E8CC','#C87844','#8C9050','#B47830'] },
+      na:   { label:'Clean & Bright',    desc:'빛이 가득한 모던 아메리칸 인테리어', img:'assets/style-na.png'   },
+      eu:   { label:'Minimal & Refined', desc:'차분하고 절제된 유러피안 무드',       img:'assets/style-eu.png'   },
+      asia: { label:'Modern & Elegant',  desc:'세련되고 깔끔한 아시안 컨템포러리',   img:'assets/style-asia.png' },
+      la:   { label:'Warm & Natural',    desc:'따뜻하고 자연스러운 라틴 감성',       img:'assets/style-la.png'   },
     },
     ratios: {
       square:    { label:'정사각형', sub:'1 : 1',  icon:'⬛' },
@@ -95,10 +95,10 @@ const T = {
     btnReset:    'Start Over',
 
     regions: {
-      na:   { label:'Clean & Bright',    desc:'Modern American — bright & airy',    palette:['#F8F6F2','#E4DDD2','#C8B99A','#A08060'] },
-      eu:   { label:'Minimal & Refined', desc:'European — calm, architectural',      palette:['#F2EDE6','#C4BAB0','#8C8278','#4A3C30'] },
-      asia: { label:'Modern & Elegant',  desc:'Asian Contemporary — clean & sleek',  palette:['#F8F8F6','#E8E0D4','#C0A88C','#7C6048'] },
-      la:   { label:'Warm & Natural',    desc:'Latin American — warm, earthy tones', palette:['#F4E8CC','#C87844','#8C9050','#B47830'] },
+      na:   { label:'Clean & Bright',    desc:'Modern American — bright & airy',    img:'assets/style-na.png'   },
+      eu:   { label:'Minimal & Refined', desc:'European — calm, architectural',      img:'assets/style-eu.png'   },
+      asia: { label:'Modern & Elegant',  desc:'Asian Contemporary — clean & sleek',  img:'assets/style-asia.png' },
+      la:   { label:'Warm & Natural',    desc:'Latin American — warm, earthy tones', img:'assets/style-la.png'   },
     },
     ratios: {
       square:    { label:'Square',    sub:'1 : 1',  icon:'⬛' },
@@ -328,8 +328,8 @@ async function showRegion() {
       <div class="sel-grid cols-2" id="rgrid">
         ${Object.entries(t('regions')).map(([k,v]) => `
           <div class="sel-card style-card" onclick="pickRegion('${k}',this)">
-            <div class="sc-palette">
-              ${v.palette.map(c => `<span class="sc-swatch" style="background:${c}"></span>`).join('')}
+            <div class="sc-thumb">
+              <img src="${v.img}" alt="${v.label}" loading="lazy"/>
             </div>
             <div class="sc-label">${v.label}</div>
             <div class="sc-desc">${v.desc}</div>
