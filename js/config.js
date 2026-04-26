@@ -1,4 +1,4 @@
 const CONFIG = {
   DEMO_MODE: false,
-  GEMINI_API_KEY: 'AIzaSyC1mVUN6t2NUGhR2-yp03eIp7qLDnurAbA',
+  GEMINI_API_KEY: 'AIzaSyC4rWoL2b5wRfXTJ895YbMiX8470Ja_r1s',
 };

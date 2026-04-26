@@ -580,9 +580,9 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
   // ── 3. 이미지 생성 요청 (모델 순서대로 시도) ─────────────────
   // 모델이 404 등으로 실패하면 다음 모델로 자동 전환
   const IMAGE_MODELS = [
-    'gemini-2.0-flash-preview-image-generation',
-    'gemini-2.5-flash-preview-05-20',
-    'gemini-2.0-flash-exp-image-generation',
+    'gemini-3.1-flash-image-preview',   // 최신 이미지 생성 모델
+    'gemini-3-pro-image-preview',        // 고품질 이미지
+    'gemini-2.5-flash-image',            // 빠른 이미지 생성
   ];
 
   const reqBody = JSON.stringify({
