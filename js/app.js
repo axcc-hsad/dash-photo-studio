@@ -11,7 +11,7 @@ const T = {
     placeholder: 'PDP URL을 입력해주세요.',
 
     step1:       'lg.com에서 라이프스타일 이미지 제작이 필요한 제품 PDP URL을 복사해서 입력해주세요.',
-    analyzing:   'URL을 분석하고 있습니다. 잠시만 기다려주세요.',
+    analyzing:   'URL을 분석하고 있습니다. 이미지를 탐색하는 중이니 잠시만 기다려주세요. (최대 30초)',
     invalidUrl:  '올바른 lg.com 제품 URL을 입력해주세요.\n예: https://www.lg.com/us/refrigerators/lg-LRMVS3006S',
     noImages:    '제품 이미지를 불러오지 못했습니다. 잠시 후 다시 시도하거나 다른 URL을 입력해주세요.',
 
@@ -67,7 +67,7 @@ const T = {
     placeholder: 'Enter PDP URL.',
 
     step1:       'Please paste the LG product PDP URL for the lifestyle image you want to create.',
-    analyzing:   'Analyzing URL. Please wait a moment.',
+    analyzing:   'Analyzing URL and scanning for product images. Please wait (up to 30 sec).',
     invalidUrl:  'Please enter a valid lg.com product URL.\nExample: https://www.lg.com/us/refrigerators/lg-LRMVS3006S',
     noImages:    'Could not load product images. Please try again or use a different URL.',
 
@@ -225,7 +225,7 @@ async function handleSend() {
 
 // ══ Step: URL ════════════════════════════════════════════════════
 async function onUrl(url) {
-  if (!isUrl(url)) {
+  if (!isUrl(url) || !url.includes('lg.com')) {
     await stream(t('invalidUrl'));
     return;
   }
@@ -246,7 +246,7 @@ async function onUrl(url) {
   }
   hideTyping();
   if (!data) {
-    const msg = scrapeErr?.message?.includes('No image')
+    const msg = scrapeErr?.message?.includes('NO_IMAGES') || scrapeErr?.message?.includes('image')
       ? t('noImages')
       : t('invalidUrl');
     await stream(msg); setBusy(false); return;
