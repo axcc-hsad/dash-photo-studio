@@ -382,25 +382,21 @@ function pickRatio(k, el) {
   freezeButtons();
   setTimeout(() => {
     userSay(t('ratios')[k].label);
-    S.step = 'PROMPT';
+    S.step = 'GEN_READY';
     updateInputBar();
-    showPrompt();
+    showGenerateBtn();
   }, 350);
 }
 
-// ══ Prompt preview ═══════════════════════════════════════════════
-async function showPrompt() {
+// ══ Generate button (ratio 선택 후 바로 노출) ═════════════════════
+async function showGenerateBtn() {
   setBusy(true);
-  S.genPrompt = buildPrompt();
-  await stream(t('promptIntro'), () => {
+  const msg = S.lang === 'ko' ? '설정이 완료됐습니다.' : 'Settings confirmed.';
+  await stream(msg, () => {
     const wrap = document.createElement('div');
     wrap.className = 'rich-block';
     wrap.innerHTML = `
-      <div class="prompt-wrap">
-        <div class="prompt-head">PROMPT</div>
-        <textarea class="prompt-ta" id="ptarea" rows="5">${esc(S.genPrompt)}</textarea>
-      </div>
-      <div class="act-row" style="margin-top:10px">
+      <div class="act-row" style="margin-top:8px">
         <button class="act-btn primary" onclick="startGen()">${t('btnGenerate')}</button>
       </div>`;
     return wrap;
@@ -408,6 +404,8 @@ async function showPrompt() {
   setBusy(false);
 }
 
+// ── buildPrompt는 STYLES/PRODUCT_CTX 기반으로 자동 생성 ──────────
+// 프롬프트 데이터는 파일 상단 STYLES, PRODUCT_CTX 객체에서 관리하세요.
 function buildPrompt() {
   const s  = STYLES[S.region];
   const pt = PRODUCT_CTX[S.productType] || PRODUCT_CTX.appliance;
@@ -427,31 +425,14 @@ The product is the clear hero. No people. Photorealistic, high quality, commerci
 
 // ══ Generation ═══════════════════════════════════════════════════
 async function startGen() {
-  if (S.step !== 'PROMPT') return;   // guard
-  const ta = document.getElementById('ptarea');
-  if (ta) S.genPrompt = ta.value.trim() || S.genPrompt;
+  if (S.step !== 'GEN_READY') return;   // guard
   freezeButtons();
   setBusy(true);
   S.step = 'GEN';
+  S.genPrompt = buildPrompt();           // 자동 생성 (프롬프트 확인 단계 없음)
   updateInputBar();
 
-  // Progress bubble
-  const pid = 'p' + Date.now();
-  const {row} = makeAgentRow();
-  row.id = pid;
-  const bub = row.querySelector('.msg-bub') || (() => { const b=document.createElement('div'); b.className='msg-bub'; row.appendChild(b); return b; })();
-  bub.innerHTML = `
-    <div class="progress">
-      <div class="pstep on" id="${pid}s1"><div class="pspin"></div>${t('sA')}</div>
-      <div class="pstep"    id="${pid}s2"><span class="pstep-ico">🎨</span>${t('sB')}</div>
-      <div class="pstep"    id="${pid}s3"><span class="pstep-ico">🖼</span>${t('sC')}</div>
-      <div class="pstep"    id="${pid}s4"><span class="pstep-ico">🔍</span>${t('sD')}</div>
-    </div>`;
-  $msgs.appendChild(row);
-  scroll();
-
-  await delay(1100); stepDone(pid,1); stepOn(pid,2);
-  await delay(1000); stepDone(pid,2); stepOn(pid,3);
+  showTyping();                          // 심플 로딩 (점 세 개)
 
   let imgUrl, qc;
   if (CONFIG.DEMO_MODE) {
@@ -466,16 +447,13 @@ async function startGen() {
       productType:S.productType, region:S.region,
       ratio:S.ratio, prompt:S.genPrompt,
     }).catch(()=>null);
-    if (!res) { stepErr(pid,3); setBusy(false); return; }
+    if (!res) { hideTyping(); setBusy(false); return; }
     imgUrl = res.imageUrl;
     const qs = res.qcScores||{};
     qc = {a:qs.productIntegrity||90, b:qs.naturalProportions||87, c:qs.backgroundHarmony||89, d:qs.regionalStyleMatch||84};
   }
 
-  stepDone(pid,3); stepOn(pid,4);
-  await delay(700); stepDone(pid,4);
-  await delay(350);
-  document.getElementById(pid)?.remove();
+  hideTyping();
 
   S.resultUrl = imgUrl;
   S.revisions = 0;
