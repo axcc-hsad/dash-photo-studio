@@ -577,25 +577,43 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
     parts.push({ text: prompt });
   }
 
-  // ── 3. 이미지 생성 요청 ──────────────────────────────────────
-  const genRes = await fetchT(
-    `${GEMINI_BASE}/gemini-2.0-flash-exp-image-generation:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-      }),
-    },
-    90000   // 합성은 시간이 더 걸릴 수 있어 90s
-  );
+  // ── 3. 이미지 생성 요청 (모델 순서대로 시도) ─────────────────
+  // 모델이 404 등으로 실패하면 다음 모델로 자동 전환
+  const IMAGE_MODELS = [
+    'gemini-2.0-flash-preview-image-generation',
+    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.0-flash-exp-image-generation',
+  ];
 
-  if (!genRes.ok) {
-    const errTxt = await genRes.text().catch(() => '');
-    throw new Error(`Gemini image HTTP ${genRes.status}: ${errTxt.slice(0, 120)}`);
+  const reqBody = JSON.stringify({
+    contents: [{ parts }],
+    generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+  });
+
+  let genData = null;
+  let lastErr  = '';
+  for (const model of IMAGE_MODELS) {
+    try {
+      const res = await fetchT(
+        `${GEMINI_BASE}/${model}:generateContent?key=${key}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody },
+        90000
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        lastErr = `${model} HTTP ${res.status}: ${data?.error?.message || ''}`;
+        console.warn('[DASH] model failed:', lastErr);
+        continue;
+      }
+      genData = data;
+      console.log('[DASH] image model used:', model);
+      break;
+    } catch (e) {
+      lastErr = `${model}: ${e.message}`;
+      console.warn('[DASH] model error:', lastErr);
+    }
   }
-  const genData = await genRes.json();
+  if (!genData) throw new Error(`All image models failed. Last: ${lastErr}`);
 
   // ── 4. 이미지 추출 ───────────────────────────────────────────
   const resParts = genData.candidates?.[0]?.content?.parts ?? [];

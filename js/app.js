@@ -347,26 +347,10 @@ function pickRegion(k, el) {
   freezeButtons();
   setTimeout(() => {
     userSay(t('regions')[k].label);
-    S.step = 'GEN_READY';
+    S.step = 'GEN';
     updateInputBar();
-    showGenerateBtn();
+    startGen();
   }, 350);
-}
-
-// ══ Generate button (ratio 선택 후 바로 노출) ═════════════════════
-async function showGenerateBtn() {
-  setBusy(true);
-  const msg = S.lang === 'ko' ? '설정이 완료됐습니다.' : 'Settings confirmed.';
-  await stream(msg, () => {
-    const wrap = document.createElement('div');
-    wrap.className = 'rich-block';
-    wrap.innerHTML = `
-      <div class="act-row" style="margin-top:8px">
-        <button class="act-btn primary" onclick="startGen()">${t('btnGenerate')}</button>
-      </div>`;
-    return wrap;
-  });
-  setBusy(false);
 }
 
 // ── buildPrompt는 STYLES/PRODUCT_CTX 기반으로 자동 생성 ──────────
@@ -390,12 +374,14 @@ No people. Photorealistic, high-end commercial photography quality.`;
 
 // ══ Generation ═══════════════════════════════════════════════════
 async function startGen() {
-  if (S.step !== 'GEN_READY') return;   // guard
-  freezeButtons();
   setBusy(true);
-  S.step = 'GEN';
-  S.genPrompt = buildPrompt();           // 자동 생성 (프롬프트 확인 단계 없음)
+  S.genPrompt = buildPrompt();
   updateInputBar();
+
+  const introMsg = S.lang === 'ko'
+    ? '제품과 인테리어를 합성하여 라이프스타일 이미지를 보여드릴게요.'
+    : 'Compositing your product into the interior. Please wait…';
+  await stream(introMsg);
 
   showTyping();                          // 심플 로딩 (점 세 개)
 
