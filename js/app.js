@@ -458,6 +458,7 @@ async function showResult(imgUrl, qc) {
       </div>`;
     return wrap;
   });
+  freezeButtons();   // 이전 결과 버블의 Download 버튼 비활성화 — 항상 최신만 활성
   S.step = 'RESULT';
   updateInputBar();
 }
@@ -593,9 +594,9 @@ function addHistory(url) {
   S.history.forEach((u,i) => {
     const d = document.createElement('div');
     d.className = 'hist-thumb' + (i===S.history.length-1?' on':'');
-    d.onclick = () => {
+    d.onclick = async () => {
       document.querySelectorAll('.hist-thumb').forEach((el,j)=>el.classList.toggle('on',j===i));
-      stream(`v${i+1}`, () => {
+      await stream(`v${i+1}`, () => {
         const wrap = document.createElement('div');
         wrap.className = 'rich-block';
         wrap.innerHTML = `
@@ -605,6 +606,7 @@ function addHistory(url) {
           </div>`;
         return wrap;
       });
+      freezeButtons();   // 이전 결과 버블 비활성화 — 히스토리 버블만 Download 활성
     };
     d.innerHTML = `<img src="${u}" alt="v${i+1}"><span class="hist-n">v${i+1}</span>`;
     $hist.appendChild(d);
