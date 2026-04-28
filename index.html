@@ -502,8 +502,9 @@
     }
     .hist-strip.show { display: flex; }
 
-    /* New Lifestyle Image button */
+    /* New Lifestyle Image button — hidden until first image is generated */
     .new-img-btn {
+      display: none;   /* shown via .hist-strip.show + .new-img-btn below */
       flex-shrink: 0;
       padding: 7px 14px;
       border-radius: 12px;
@@ -519,6 +520,8 @@
       transition: background 0.15s, transform 0.1s;
       white-space: nowrap;
     }
+    /* Appear as soon as history thumbnails show up */
+    .hist-strip.show + .new-img-btn { display: block; }
     .new-img-btn:hover { background: rgba(200,16,46,0.08); transform: translateY(-1px); }
     .hist-strip::-webkit-scrollbar { height: 3px; }
     .hist-thumb {
