@@ -49,8 +49,10 @@ const T = {
       asia: { label:'Modern & Elegant',  desc:'세련되고 깔끔한 아시안 컨템포러리',   img:'assets/style-asia.png' },
       la:   { label:'Warm & Natural',    desc:'따뜻하고 자연스러운 라틴 감성',       img:'assets/style-la.png'   },
     },
+    btnImgSize:  '이미지 사이즈',
+    btnUpscale:  'Upscale',
     ratios: {
-      square:    { label:'정사각형', sub:'1 : 1',  icon:'⬛' },
+      square:    { label:'정사각형', sub:'1 : 1',  icon:'◼' },
       landscape: { label:'가로형',   sub:'16 : 9', icon:'▬'  },
       portrait:  { label:'세로형',   sub:'4 : 5',  icon:'▮'  },
     },
@@ -85,6 +87,8 @@ const T = {
     qcLabels:    ['Product integrity', 'Natural proportions', 'Background harmony', 'Style match'],
     btnDL:       'Download',
     btnEdit:     'Request edit',
+    btnImgSize:  'Image Size',
+    btnUpscale:  'Upscale',
     revLeft:     (n) => `${n} revision${n===1?'':'s'} left`,
 
     revQ:        'Select a revision or type below.',
@@ -101,7 +105,7 @@ const T = {
       la:   { label:'Warm & Natural',    desc:'Latin American — warm, earthy tones', img:'assets/style-la.png'   },
     },
     ratios: {
-      square:    { label:'Square',    sub:'1 : 1',  icon:'⬛' },
+      square:    { label:'Square',    sub:'1 : 1',  icon:'◼' },
       landscape: { label:'Landscape', sub:'16 : 9', icon:'▬'  },
       portrait:  { label:'Portrait',  sub:'4 : 5',  icon:'▮'  },
     },
@@ -379,18 +383,74 @@ No people. No text, no words, no letters, no typography, no captions, no waterma
 Photorealistic, high-end commercial photography quality.`;
 }
 
+// ══ Generation progress streamer ═════════════════════════════════
+// Streams cycling messages in a single bubble while generation is in progress.
+// Caller: const stop = { stopped:false }; streamGenProgress(stop, 'gen');
+// To end: stop.stopped = true; await progressPromise;
+async function streamGenProgress(stopSignal, mode = 'gen') {
+  const ko = mode === 'rev'
+    ? ['수정사항을 반영하는 중이야.', '조금만 기다려줘...', '거의 다 됐어!', '마무리 중이야, 잠깐만.']
+    : ['지금 이미지를 합성하고 있어.', '조금만 기다려줘...', '거의 다 됐어!', '잠시만, 마무리 중이야.'];
+  const en = mode === 'rev'
+    ? ['Applying your revision now.', 'Just a moment...', 'Almost there!', 'Finishing up.']
+    : ['Generating your lifestyle image now.', 'Just a moment...', 'Almost there!', 'Adding the finishing touches.'];
+  const messages = S.lang === 'ko' ? ko : en;
+
+  const { row, bub } = makeAgentRow();
+  $msgs.appendChild(row);
+  scroll();
+
+  const textSpan   = document.createElement('span');
+  const cursorSpan = document.createElement('span');
+  cursorSpan.className = 'stream-cursor';
+  bub.appendChild(textSpan);
+  bub.appendChild(cursorSpan);
+
+  let i = 0;
+  while (!stopSignal.stopped) {
+    const msg = messages[i % messages.length];
+    let html = '';
+    textSpan.innerHTML = '';
+
+    // Stream characters
+    for (const ch of msg) {
+      if (stopSignal.stopped) break;
+      html += ch === '\n' ? '<br>' : esc1(ch);
+      textSpan.innerHTML = html;
+      scroll();
+      await delay(STREAM_SPEED);
+    }
+    if (stopSignal.stopped) break;
+
+    // Pause between messages (checked every 100ms so stop is responsive)
+    for (let t = 0; t < 18 && !stopSignal.stopped; t++) await delay(100);
+    if (stopSignal.stopped) break;
+
+    // Soft fade before next message
+    bub.style.transition = 'opacity 0.2s';
+    bub.style.opacity    = '0.3';
+    for (let t = 0; t < 2 && !stopSignal.stopped; t++) await delay(100);
+    textSpan.innerHTML = '';
+    bub.style.opacity    = '1';
+    bub.style.transition = '';
+
+    i++;
+  }
+
+  cursorSpan.remove();
+  row.remove();   // remove progress bubble when done
+}
+
 // ══ Generation ═══════════════════════════════════════════════════
 async function startGen() {
   setBusy(true);
   S.genPrompt = buildPrompt();
   updateInputBar();
 
-  const introMsg = S.lang === 'ko'
-    ? '제품과 인테리어를 합성하여 라이프스타일 이미지를 보여드릴게요.'
-    : 'Compositing your product into the interior. Please wait…';
-  await stream(introMsg);
-
-  showTyping();                          // 심플 로딩 (점 세 개)
+  // Progress messages stream in background while the API call runs
+  const genStop   = { stopped: false };
+  const genProgress = streamGenProgress(genStop, 'gen');
+  const stopProgress = async () => { genStop.stopped = true; await genProgress; };
 
   let imgUrl, qc;
   if (CONFIG.DEMO_MODE) {
@@ -407,7 +467,7 @@ async function startGen() {
       ratio: S.ratio, prompt: S.genPrompt,
     }).catch(e => { genErr = e; console.error('[DASH] generate-image error:', e); return null; });
     if (!res) {
-      hideTyping();
+      await stopProgress();
       const msg = S.lang === 'ko'
         ? `이미지 생성에 실패했습니다. 다시 시도해주세요.\n(${genErr?.message || '알 수 없는 오류'})`
         : `Image generation failed. Please try again.\n(${genErr?.message || 'Unknown error'})`;
@@ -421,7 +481,7 @@ async function startGen() {
     qc = {a:qs.productIntegrity||90, b:qs.naturalProportions||87, c:qs.backgroundHarmony||89, d:qs.regionalStyleMatch||84};
   }
 
-  hideTyping();
+  await stopProgress();
 
   S.resultUrl = imgUrl;
   S.lastQc    = qc;
@@ -453,6 +513,8 @@ async function showResult(imgUrl, qc) {
         <button class="act-btn primary" onclick="doDownload()">${t('btnDL')}</button>
         ${rem > 0
           ? `<button class="act-btn outline" onclick="showRevPanel()">${t('btnEdit')}</button>
+             <button class="act-btn outline" onclick="showRevPanel()">◼ ▬ ▮ ${t('btnImgSize')}</button>
+             <button class="act-btn outline" onclick="showRevPanel()">✨ ${t('btnUpscale')}</button>
              <span class="rev-remain">${t('revLeft', rem)}</span>`
           : `<button class="act-btn ghost" onclick="doReset()">${t('btnReset')}</button>`}
       </div>`;
@@ -466,8 +528,8 @@ async function showResult(imgUrl, qc) {
 // ══ Revision ═════════════════════════════════════════════════════
 // 칩별 아이콘 매핑
 const CHIP_ICONS = {
-  'Square 1:1':'⬛', 'Landscape 16:9':'▬', 'Portrait 4:5':'▮', 'Upscale Image':'⬆',
-  '정사각형 1:1':'⬛', '가로 16:9':'▬',    '세로 4:5':'▮',    '이미지 업스케일링':'⬆',
+  'Square 1:1':'◼', 'Landscape 16:9':'▬', 'Portrait 4:5':'▮', 'Upscale Image':'✨',
+  '정사각형 1:1':'◼', '가로 16:9':'▬',    '세로 4:5':'▮',    '이미지 업스케일링':'✨',
 };
 
 async function showRevPanel() {
@@ -537,8 +599,11 @@ async function applyRev(req) {
   userSay(req);
   S.revisions++;
   setBusy(true);
-  await stream(t('revising', req));
-  showTyping();
+
+  // Progress messages stream in background while revision generates
+  const revStop   = { stopped: false };
+  const revProgress = streamGenProgress(revStop, 'rev');
+  const stopRevProgress = async () => { revStop.stopped = true; await revProgress; };
 
   let newUrl, qc;
   if (CONFIG.DEMO_MODE) {
@@ -553,13 +618,13 @@ async function applyRev(req) {
       productType:S.productType, region:S.region,
       ratio:S.ratio, prompt:revPrompt,
     }).catch(()=>null);
-    if (!res) { hideTyping(); setBusy(false); return; }
+    if (!res) { await stopRevProgress(); setBusy(false); return; }
     newUrl = res.imageUrl;
     const qs = res.qcScores||{};
     qc = {a:qs.productIntegrity||91, b:qs.naturalProportions||87, c:qs.backgroundHarmony||90, d:qs.regionalStyleMatch||86};
   }
 
-  hideTyping();
+  await stopRevProgress();
   S.resultUrl = newUrl;
   S.lastQc    = qc;
   addHistory(newUrl);
