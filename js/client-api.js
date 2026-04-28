@@ -87,7 +87,7 @@ async function clientScrape(url) {
     throw new Error('NO_IMAGES: Could not retrieve product images');
   }
 
-  return await buildResult(imgs, cdnImgs, name, type, feat);
+  return await buildResult(imgs, cdnImgs, name, type, feat, info.slug);
 }
 
 // ══ A. JINA.AI READER ════════════════════════════════════════════
@@ -170,8 +170,12 @@ async function jinaFetch(url) {
 // IMPORTANT: never probe D* patterns (D01.jpg = Dimension drawing)
 // Limit to slots 1-5 only — slot 6+ are usually spec/back images
 async function cdnProbe(info, imgSet, cdnSet = new Set()) {
-  const { market, category, slug, modelRaw, modelBase } = info;
+  const { market, category, categoryPath, slug, modelRaw, modelBase } = info;
   if (!slug) return;
+  // Use full category path (e.g. "tv-barres-de-son/qned") so we hit the correct CDN URL.
+  // Many LG URLs have subcategories (e.g. /tvs/oled-tvs/, /tv-barres-de-son/qned/) that
+  // must be included; using just parts[1] caused 404s and fallback to Jina's full page pool.
+  const cdnCat = categoryPath || category;
 
   // Local probe: load image, check dimensions, reject video/landscape thumbnails
   function probeUrl(url) {
@@ -203,14 +207,18 @@ async function cdnProbe(info, imgSet, cdnSet = new Set()) {
   // Market suffixes for EU/US/Asia CDN filenames
   const mkSufx = ['_AEK', '_AEKQ', '_AEK2', '_MEA', '_AU', '_CA', '_US', ''];
 
-  // ── LG content/dam gallery (EU/UK/Asia): medium01–05 ONLY ────
-  // DO NOT probe D01, D02 etc. — those are Dimension drawings
-  for (let n = 1; n <= 5; n++) {
-    const pad = String(n).padStart(2, '0');
-    for (const ext of ['jpg', 'png']) {
-      probes.push(probeUrl(
-        `https://www.lg.com/content/dam/channel/wcms/${market}/images/${category}/${slug}/gallery/medium${pad}.${ext}`
-      ));
+  // ── LG content/dam gallery: probe BOTH full categoryPath AND single category ──
+  // Full path (e.g. "tv-barres-de-son/qned") hits the correct nested CDN structure.
+  // Single category is kept as fallback for simpler URL structures (/uk/tvs/lg-oled55c54la/).
+  const catPaths = [...new Set([cdnCat, category].filter(Boolean))];
+  for (const cp of catPaths) {
+    for (let n = 1; n <= 5; n++) {
+      const pad = String(n).padStart(2, '0');
+      for (const ext of ['jpg', 'png']) {
+        probes.push(probeUrl(
+          `https://www.lg.com/content/dam/channel/wcms/${market}/images/${cp}/${slug}/gallery/medium${pad}.${ext}`
+        ));
+      }
     }
   }
 
@@ -394,11 +402,11 @@ async function parseHtml(html, url, info, name, type, feat) {
   // Features from __NEXT_DATA__ if not already set
   if (!feat.length && nextData) { const fs = new Set(); collectFeat(nextData, fs, 0); feat = [...fs].slice(0, 5); }
 
-  return await buildResult(imgs, new Set(), name || info.displayName, type || info.productType, feat);
+  return await buildResult(imgs, new Set(), name || info.displayName, type || info.productType, feat, info.slug);
 }
 
 // ══ RESULT BUILDER ════════════════════════════════════════════════
-async function buildResult(imgSet, cdnImgs, productName, productType, productFeatures) {
+async function buildResult(imgSet, cdnImgs, productName, productType, productFeatures, slug = '') {
   // ── CDN-first strategy ────────────────────────────────────────
   // CDN-probed images (medium01-05 / _AEK_1-5) are preferred packshots.
   // When any CDN gallery images exist, use those first; fall back to full pool.
@@ -409,12 +417,26 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
   }
 
   // 1. Hard-filter obvious bad images by URL pattern
-  const pool = [...source]
+  let pool = [...source]
     .filter(imgUrl)
     .filter(u => !isSpecImage(u))
     .filter(u => !/\d{1,2}x\d{1,2}(?!\d)/.test(u))
     .filter(u => !/[_-]\d{2,3}x\d{2,3}[_.-]/i.test(u))
-    .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u))
+    .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u));
+
+  // 1b. In Jina-fallback mode (no CDN gallery), Jina scrapes the ENTIRE page including
+  //     related product sections (washers on a TV page, etc.).
+  //     If the product slug is known, prefer images whose URL contains that slug —
+  //     those come from this product's own CDN path, not cross-promotions.
+  if (!hasCdnGallery && slug) {
+    const slugPool = pool.filter(u => u.toLowerCase().includes(slug.toLowerCase()));
+    if (slugPool.length >= 2) {
+      console.log('[DASH] Slug-filter: found', slugPool.length, 'slug-matched images → using those only');
+      pool = slugPool;
+    } else {
+      console.log('[DASH] Slug-filter: only', slugPool.length, 'slug-matched images → using full pool');
+    }
+  }
 
   // 2. Deduplicate: same slot number = same physical image from different CDNs
   //    e.g. medium01.jpg + GSXV80PZLE_AEK_1.jpg → keep highest-scored URL for slot 1
@@ -534,7 +556,9 @@ Return ONLY a JSON array (no explanation):
   const scores   = JSON.parse(match[0]);
   const scoreMap = new Map(scores.map(s => [s.i - 1, s.score]));   // 0-indexed
 
-  const scored = candidates.map((c, i) => ({ ...c, vScore: scoreMap.get(i) ?? 2 }));
+  // Default to 1 (poor) if Gemini didn't score an image — prevents unscored images
+  // from being treated as acceptable (score 2) and slipping through
+  const scored = candidates.map((c, i) => ({ ...c, vScore: scoreMap.get(i) ?? 1 }));
   console.log('[DASH] urlContext vision scores:', scored.map(s=>`${s.url.split('/').pop()}→${s.vScore}`).join(', '));
 
   return scored
@@ -656,6 +680,9 @@ function parseUrl(url) {
     const market  = parts[0] || 'us';
     const category = parts[1] || '';
     const slug    = parts[parts.length - 1].replace(/\/$/, '').toLowerCase();
+    // Full category path: everything between market and slug
+    // e.g. /fr/tv-barres-de-son/qned/lg-75qned87a6b → categoryPath = "tv-barres-de-son/qned"
+    const categoryPath = parts.slice(1, parts.length - 1).join('/');
 
     // ── Model number extraction ───────────────────────────────────
     // LG slugs: "lg-oled55c54la-oled-tv-c5-4k"
@@ -684,7 +711,7 @@ function parseUrl(url) {
 
     const displayName = 'LG ' + modelRaw;
 
-    return { market, category, slug, modelRaw, modelBase, productType, displayName };
+    return { market, category, categoryPath, slug, modelRaw, modelBase, productType, displayName };
   } catch {
     return { market:'us', category:'', slug:'', modelRaw:'', modelBase:'', productType:'appliance', displayName:'LG Product' };
   }
