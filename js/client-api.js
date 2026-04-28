@@ -184,14 +184,10 @@ async function cdnProbe(info, imgSet, cdnSet = new Set()) {
         const h = img.naturalHeight;
         // Skip tiny images (icons, placeholders)
         if (w < 100 || h < 100) return resolve();
-        const ratio = w / h;
-        // Reject 16:9-style landscape images — video thumbnails & campaign shots
-        // Packshots (including TV with stand) are square to mildly landscape (≤ 1.55)
-        // 16:9 = 1.78, 3:2 = 1.5, 4:3 = 1.33
-        if (ratio > 1.55) {
-          console.log('[DASH] CDN skip landscape', ratio.toFixed(2), url.split('/').pop());
-          return resolve();
-        }
+        // NOTE: aspect-ratio filtering was removed.
+        // TV front-facing packshots (ratio ~1.7) and video thumbnails (ratio 1.78)
+        // are too close to distinguish by ratio alone — ratio filter incorrectly
+        // blocked the TV front-view packshot. Vision scoring handles this instead.
         imgSet.add(url); cdnSet.add(url);
         resolve();
       };
@@ -507,10 +503,13 @@ Please access each image URL below and score it for use as a product packshot in
 ${urlList}
 
 Scoring rules (score each image 0–3):
-3 = Ideal: LG ${productType} front-facing, white/plain neutral background, no people, no text overlay
-2 = Acceptable: product clearly visible, slight angle or studio-colored background
-1 = Poor: back view only, side-profile only, product very small, heavily cropped
-0 = REJECT: lifestyle shot with people in a room, dimension/spec diagram, wrong product type (e.g. washer shown on TV page), extreme lifestyle crop with no recognisable product, video thumbnail, marketing banner
+3 = Ideal packshot: LG ${productType} clearly visible, front-facing, white or plain neutral/gradient background, no people, minimal or no text overlay
+2 = Acceptable: product clearly visible, slight angle (e.g. 3/4 view) or gray/studio-colored background
+1 = Poor: back view only, extreme side-profile (product very thin), heavily cropped to just a detail, product very small in frame
+0 = REJECT: ANY of the following — lifestyle scene with people in a room; dimension/spec diagram; wrong product type (e.g. washer/dryer on a TV page); extreme close-up crop with no recognisable product outline; video thumbnail (movie/game scene shown full-screen); marketing banner with large text overlay covering most of the image; abstract color art with no product visible; partial crop showing only fabric/texture/background
+
+For ${productType} specifically:
+${productType === 'tv' ? '- A TV with the screen showing abstract art or demo content is OK (score 2-3) as long as the TV frame/stand are clearly visible\n- Score 0 if it is ONLY the screen content with no TV frame/bezel visible\n- A marketing overlay ("LG QNED evo AI / 2025") covering most of the image scores 0' : '- Product must be the clear subject of the image'}
 
 Return ONLY a JSON array (no explanation):
 [{"i":1,"score":3},{"i":2,"score":0},...] — one object per image.` }],
