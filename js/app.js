@@ -192,7 +192,7 @@ function applyLang() {
   ['ko1','ko2'].forEach(id => document.getElementById(id)?.classList.toggle('on', l==='ko'));
   ['en1','en2'].forEach(id => document.getElementById(id)?.classList.toggle('on', l==='en'));
   document.getElementById('btn-start').textContent = T[l].btnStart;
-  $inp.placeholder = T[l].placeholder;
+  updateInputBar();   // sets correct placeholder per current step
   // Re-stream bubble only when index screen is visible
   if (document.getElementById('idx').classList.contains('active')) {
     streamIdxBubble(l);
