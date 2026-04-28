@@ -16,7 +16,7 @@ const T = {
     noImages:    '제품 이미지를 불러오지 못했습니다. 잠시 후 다시 시도하거나 다른 URL을 입력해주세요.',
 
     foundImages: (n, name) => `제품 이미지를 확인했습니다.\n${name}\n\n라이프스타일에 합성할 적합한 제품이미지를 선택해주세요.`,
-    btnPick:     '이 이미지로 진행',
+    btnPick:     '이미지 선택',
 
     regionQ:     '인테리어 분위기를 선택해주세요.',
     ratioQ:      '이미지 비율을 선택해주세요.',
@@ -29,8 +29,8 @@ const T = {
     sC: '라이프스타일 이미지 생성 중',
     sD: '품질 검수 중',
 
-    resultMsg:   (r) => `${r} 스타일 이미지가 완성됐습니다. 확인해보세요.`,
-    qcTitle:     'QC 체크',
+    resultMsg:   () => `라이프스타일 이미지가 완성됐습니다. 확인해보세요.`,
+    qcTitle:     '',
     qcLabels:    ['제품 외형 보존', '비율 자연스러움', '배경 조화', '스타일 일치'],
     btnDL:       '다운로드',
     btnEdit:     '수정 요청',
@@ -80,7 +80,7 @@ const T = {
     sC: 'Generating lifestyle image',
     sD: 'Quality check',
 
-    resultMsg:   (r) => `${r} style image is ready. Please review.`,
+    resultMsg:   () => `Lifestyle image complete. Please review.`,
     qcTitle:     'QC Check',
     qcLabels:    ['Product integrity', 'Natural proportions', 'Background harmony', 'Style match'],
     btnDL:       'Download',
@@ -207,10 +207,10 @@ function t(key, ...a) {
 async function handleSend() {
   const val = $inp.value.trim();
   if (!val || S.busy) return;
-  userSay(val);
   $inp.value = '';
-  if (S.step === 'URL')    return onUrl(val);
+  if (S.step === 'URL')    { userSay(val); return onUrl(val); }
   if (S.step === 'REVISE' || S.step === 'RESULT') return onRevision(val);
+  // REVISE는 applyRev 내부에서 userSay 처리
 }
 
 // ══ Step: URL ════════════════════════════════════════════════════
@@ -312,7 +312,7 @@ function pickImg(i) {
 function confirmImg() {
   if (S.step !== 'IMAGES') return;   // guard: ignore stale button clicks
   freezeButtons();
-  userSay(S.candidates[S.pickedIdx].label);
+  userSay(S.lang === 'ko' ? '이 이미지로 선택할게' : 'Selected this image');
   S.step = 'REGION';
   setTimeout(() => showRegion(), 200);
 }
@@ -369,7 +369,8 @@ Lighting: ${s.light}.
 Styling props: ${s.props}.
 Avoid: ${s.avoid}.
 The product must be the clear hero — fully visible, undistorted, front-facing.
-No people. Photorealistic, high-end commercial photography quality.`;
+No people. No text, no words, no letters, no typography, no captions, no watermarks, no labels anywhere in the image.
+Photorealistic, high-end commercial photography quality.`;
 }
 
 // ══ Generation ═══════════════════════════════════════════════════
@@ -425,17 +426,15 @@ async function startGen() {
 
 // ══ Result ═══════════════════════════════════════════════════════
 async function showResult(imgUrl, qc) {
-  const rl  = t('regions')[S.region]?.label || S.region;
   const rem = S.maxRev - S.revisions;
   const labels = t('qcLabels');
 
-  await stream(t('resultMsg', rl), () => {
+  await stream(t('resultMsg'), () => {
     const wrap = document.createElement('div');
     wrap.className = 'rich-block';
     wrap.innerHTML = `
       <img class="result-img" src="${imgUrl}" alt="result" loading="lazy"/>
       <div class="qc-wrap">
-        <div class="qc-title">${t('qcTitle')}</div>
         ${['a','b','c','d'].map((k,i) => `
           <div class="qc-row">
             <span class="qc-name">${labels[i]}</span>
@@ -481,14 +480,12 @@ async function applyRev(req) {
   userSay(req);
   S.revisions++;
   setBusy(true);
-  showTyping();
-  await delay(2600);
-  hideTyping();
   await stream(t('revising', req));
+  showTyping();   // API 호출 전체 동안 로딩 유지
 
   let newUrl, qc;
   if (CONFIG.DEMO_MODE) {
-    await delay(800);
+    await delay(2200);
     const dims={square:'900x900',landscape:'1280x720',portrait:'800x1000'}[S.ratio]||'900x900';
     newUrl = `https://placehold.co/${dims}/f0eaff/C8102E?text=Revised+v${S.revisions}`;
     qc = {a:93,b:89,c:92,d:87};
@@ -498,12 +495,13 @@ async function applyRev(req) {
       productType:S.productType, region:S.region,
       ratio:S.ratio, prompt:S.genPrompt+`\nRevision: ${req}`,
     }).catch(()=>null);
-    if (!res) { setBusy(false); return; }
+    if (!res) { hideTyping(); setBusy(false); return; }
     newUrl = res.imageUrl;
     const qs = res.qcScores||{};
     qc = {a:qs.productIntegrity||91, b:qs.naturalProportions||87, c:qs.backgroundHarmony||90, d:qs.regionalStyleMatch||86};
   }
 
+  hideTyping();
   S.resultUrl = newUrl;
   addHistory(newUrl);
   await stream(t('revised'));
