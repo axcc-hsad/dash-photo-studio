@@ -249,7 +249,8 @@
       from { opacity: 0; transform: translateY(6px); }
       to   { opacity: 1; transform: translateY(0); }
     }
-    .msg-row.user { flex-direction: row-reverse; }
+    .msg-row.user { flex-direction: row-reverse; padding-right: 4px; }
+    .msg-row.user .msg-bub { margin-left: auto; }
 
     /* Agent avatar */
     .avatar {
@@ -426,6 +427,9 @@
 
     /* Revision chips */
     .rev-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .rev-divider {
+      width: 100%; border: none; border-top: 1px solid #f0f0f0; margin: 4px 0;
+    }
     .rev-chip {
       padding: 6px 13px; border-radius: 16px;
       border: 1px solid rgba(200,16,46,0.3);

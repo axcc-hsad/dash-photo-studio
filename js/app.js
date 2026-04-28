@@ -37,7 +37,7 @@ const T = {
     revLeft:     (n) => `수정 ${n}회 남음`,
 
     revQ:        '수정 방향을 선택하거나 직접 입력해주세요.',
-    revChips:    ['배경 더 밝게', '배경 더 따뜻하게', '소품 줄이기', '스타일 강화', '제품 더 크게', '공간 정돈'],
+    revChips:    ['배경 더 밝게', '배경 더 따뜻하게', '소품 줄이기', '스타일 강화', '제품 더 크게', '공간 정돈', '정사각형 1:1', '가로 16:9', '세로 4:5', '이미지 업스케일링'],
     revising:    (r) => `수정 요청을 반영합니다. "${r}"\n약 30초 소요됩니다.`,
     revised:     '수정이 완료됐습니다. 결과를 확인해주세요.',
     noRev:       '수정 횟수를 모두 사용했습니다. 다운로드하거나 처음부터 시작해주세요.',
@@ -88,7 +88,7 @@ const T = {
     revLeft:     (n) => `${n} revision${n===1?'':'s'} left`,
 
     revQ:        'Select a revision or type below.',
-    revChips:    ['Brighter background', 'Warmer tone', 'Fewer props', 'Stronger style', 'Larger product', 'Cleaner space'],
+    revChips:    ['Brighter background', 'Warmer tone', 'Fewer props', 'Stronger style', 'Larger product', 'Cleaner space', 'Square 1:1', 'Landscape 16:9', 'Portrait 4:5', 'Upscale Image'],
     revising:    (r) => `Applying revision. "${r}"\nTakes about 30 seconds.`,
     revised:     'Revision complete. Please review.',
     noRev:       'No revisions left. Download or start over.',
@@ -131,8 +131,8 @@ const S = {
   pdpUrl:'', productName:'', productType:'fridge',
   productFeatures:[],
   candidates:[], pickedIdx:0,
-  region:'', ratio:'square',   // 비율 고정 (기본값: 1:1)
-  genPrompt:'', resultUrl:'',
+  region:'', ratio:'square',
+  genPrompt:'', resultUrl:'', lastQc:null,
   revisions:0, maxRev:2, history:[],
 };
 
@@ -355,18 +355,22 @@ function pickRegion(k, el) {
 
 // ── buildPrompt는 STYLES/PRODUCT_CTX 기반으로 자동 생성 ──────────
 // 프롬프트 데이터는 파일 상단 STYLES, PRODUCT_CTX 객체에서 관리하세요.
+const RATIO_LABELS = { square:'square 1:1 composition', landscape:'wide landscape 16:9 composition', portrait:'portrait 4:5 composition' };
+
 function buildPrompt() {
   const s  = STYLES[S.region];
   const pt = PRODUCT_CTX[S.productType] || PRODUCT_CTX.appliance;
   const featLine = S.productFeatures && S.productFeatures.length
     ? `\nProduct highlights: ${S.productFeatures.slice(0, 3).join(', ')}.`
     : '';
+  const ratioLine = RATIO_LABELS[S.ratio] || RATIO_LABELS.square;
   return `Create a professional lifestyle interior photo for an LG ${S.productType} advertisement.
 Place the product (${pt}) naturally in a ${s.space}.${featLine}
 Mood: ${s.mood}.
 Color palette: ${s.palette}.
 Lighting: ${s.light}.
 Styling props: ${s.props}.
+Composition: ${ratioLine}.
 Avoid: ${s.avoid}.
 The product must be the clear hero — fully visible, undistorted, front-facing.
 No people. No text, no words, no letters, no typography, no captions, no watermarks, no labels anywhere in the image.
@@ -418,6 +422,7 @@ async function startGen() {
   hideTyping();
 
   S.resultUrl = imgUrl;
+  S.lastQc    = qc;
   S.revisions = 0;
   addHistory(imgUrl);
   await showResult(imgUrl, qc);
@@ -462,9 +467,14 @@ async function showRevPanel() {
   await stream(t('revQ'), () => {
     const wrap = document.createElement('div');
     wrap.className = 'rich-block';
+    const chips = t('revChips');
+    const styleChips = chips.slice(0, 6);
+    const sizeChips  = chips.slice(6);
     wrap.innerHTML = `
       <div class="rev-chips">
-        ${t('revChips').map(c => `<button class="rev-chip" onclick="applyRev('${esc(c)}')">${c}</button>`).join('')}
+        ${styleChips.map(c => `<button class="rev-chip" onclick="applyRev('${esc(c)}')">${c}</button>`).join('')}
+        <hr class="rev-divider"/>
+        ${sizeChips.map(c => `<button class="rev-chip" onclick="applyRev('${esc(c)}')">${c}</button>`).join('')}
       </div>`;
     return wrap;
   });
@@ -475,13 +485,47 @@ async function showRevPanel() {
 
 async function onRevision(text) { await applyRev(text); }
 
+// 비율 칩 → S.ratio 매핑
+const RATIO_CHIP_MAP = {
+  '정사각형 1:1':'square', '가로 16:9':'landscape', '세로 4:5':'portrait',
+  'Square 1:1':'square',  'Landscape 16:9':'landscape', 'Portrait 4:5':'portrait',
+};
+const UPSCALE_CHIPS = ['이미지 업스케일링', 'Upscale Image'];
+
 async function applyRev(req) {
   if (S.revisions >= S.maxRev) { await stream(t('noRev')); return; }
+
+  // ── 업스케일링 (API 없음, 수정 횟수 차감 없음) ──────────────────
+  if (UPSCALE_CHIPS.includes(req)) {
+    userSay(req);
+    setBusy(true);
+    await stream(S.lang === 'ko' ? '이미지를 2배 업스케일링합니다.' : 'Upscaling image 2×…');
+    showTyping();
+    try {
+      const upscaled = await upscaleImage(S.resultUrl);
+      hideTyping();
+      S.resultUrl = upscaled;
+      addHistory(upscaled);
+      await showResult(upscaled, S.lastQc || {a:88,b:85,c:87,d:83});
+    } catch(e) {
+      hideTyping();
+      await stream(S.lang === 'ko' ? '업스케일링에 실패했습니다.' : 'Upscaling failed.');
+    }
+    setBusy(false);
+    return;
+  }
+
+  // ── 비율 변경 → S.ratio 업데이트 후 재생성 ──────────────────────
+  if (RATIO_CHIP_MAP[req]) {
+    S.ratio = RATIO_CHIP_MAP[req];
+    S.genPrompt = buildPrompt();  // 비율 반영해서 프롬프트 재빌드
+  }
+
   userSay(req);
   S.revisions++;
   setBusy(true);
   await stream(t('revising', req));
-  showTyping();   // API 호출 전체 동안 로딩 유지
+  showTyping();
 
   let newUrl, qc;
   if (CONFIG.DEMO_MODE) {
@@ -490,10 +534,11 @@ async function applyRev(req) {
     newUrl = `https://placehold.co/${dims}/f0eaff/C8102E?text=Revised+v${S.revisions}`;
     qc = {a:93,b:89,c:92,d:87};
   } else {
+    const revPrompt = RATIO_CHIP_MAP[req] ? S.genPrompt : S.genPrompt + `\nRevision: ${req}`;
     const res = await apiCall('generate-image',{
       productImageUrl:S.candidates[S.pickedIdx].url,
       productType:S.productType, region:S.region,
-      ratio:S.ratio, prompt:S.genPrompt+`\nRevision: ${req}`,
+      ratio:S.ratio, prompt:revPrompt,
     }).catch(()=>null);
     if (!res) { hideTyping(); setBusy(false); return; }
     newUrl = res.imageUrl;
@@ -503,10 +548,30 @@ async function applyRev(req) {
 
   hideTyping();
   S.resultUrl = newUrl;
+  S.lastQc    = qc;
   addHistory(newUrl);
   await stream(t('revised'));
   await showResult(newUrl, qc);
   setBusy(false);
+}
+
+// 캔버스로 2배 업스케일
+function upscaleImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth  * 2;
+      canvas.height = img.naturalHeight * 2;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.95));
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
 }
 
 // ══ History ══════════════════════════════════════════════════════
@@ -516,14 +581,35 @@ function addHistory(url) {
   S.history.forEach((u,i) => {
     const d = document.createElement('div');
     d.className = 'hist-thumb' + (i===S.history.length-1?' on':'');
-    d.onclick   = () => {
+    d.onclick = () => {
       document.querySelectorAll('.hist-thumb').forEach((el,j)=>el.classList.toggle('on',j===i));
-      stream(`v${i+1} — <a href="${u}" target="_blank" style="color:var(--red)">원본 보기</a>`);
+      stream(`v${i+1}`, () => {
+        const wrap = document.createElement('div');
+        wrap.className = 'rich-block';
+        wrap.innerHTML = `
+          <img class="result-img" src="${u}" alt="v${i+1}" loading="lazy"/>
+          <div class="act-row">
+            <button class="act-btn primary" onclick="doDownloadIdx(${i})">${t('btnDL')}</button>
+          </div>`;
+        return wrap;
+      });
     };
     d.innerHTML = `<img src="${u}" alt="v${i+1}"><span class="hist-n">v${i+1}</span>`;
     $hist.appendChild(d);
   });
   $hist.classList.add('show');
+}
+
+function doDownloadIdx(i) {
+  const url = S.history[i];
+  if (!url) return;
+  const a = document.createElement('a');
+  const ext = url.startsWith('data:image/jpeg') ? 'jpg' : 'png';
+  a.download = `DASH-v${i+1}-${Date.now()}.${ext}`;
+  a.href = url;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 // ══ Utilities ════════════════════════════════════════════════════
@@ -541,7 +627,7 @@ function doDownload() {
 function doReset() {
   $msgs.innerHTML = ''; $hist.innerHTML = '';
   $hist.classList.remove('show');
-  Object.assign(S, {step:'IDLE',busy:false,pdpUrl:'',productName:'',productType:'fridge',productFeatures:[],candidates:[],pickedIdx:0,region:'',ratio:'square',genPrompt:'',resultUrl:'',revisions:0,history:[]});
+  Object.assign(S, {step:'IDLE',busy:false,pdpUrl:'',productName:'',productType:'fridge',productFeatures:[],candidates:[],pickedIdx:0,region:'',ratio:'square',genPrompt:'',resultUrl:'',lastQc:null,revisions:0,history:[]});
   document.getElementById('chat').classList.remove('active');
   document.getElementById('idx').classList.add('active');
   streamIdxBubble(S.lang);          // ← re-animate bubble when returning to landing
@@ -733,7 +819,7 @@ function makeAgentRow() {
 function userSay(text) {
   const row = document.createElement('div');
   row.className = 'msg-row user';
-  row.innerHTML = `<div class="avatar ghost"></div><div class="msg-bub">${esc(text)}</div>`;
+  row.innerHTML = `<div class="msg-bub">${esc(text)}</div>`;
   $msgs.appendChild(row);
   scroll();
 }
