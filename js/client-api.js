@@ -173,10 +173,30 @@ async function cdnProbe(info, imgSet, cdnSet = new Set()) {
   const { market, category, slug, modelRaw, modelBase } = info;
   if (!slug) return;
 
-  // Local probe: on success, add to BOTH the shared pool AND the CDN-only set
+  // Local probe: load image, check dimensions, reject video/landscape thumbnails
   function probeUrl(url) {
-    return imgExists(url).then(ok => {
-      if (ok) { imgSet.add(url); cdnSet.add(url); }
+    return new Promise(resolve => {
+      const img   = new Image();
+      const timer = setTimeout(() => resolve(), 7000);
+      img.onload  = () => {
+        clearTimeout(timer);
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        // Skip tiny images (icons, placeholders)
+        if (w < 100 || h < 100) return resolve();
+        const ratio = w / h;
+        // Reject 16:9-style landscape images — video thumbnails & campaign shots
+        // Packshots (including TV with stand) are square to mildly landscape (≤ 1.55)
+        // 16:9 = 1.78, 3:2 = 1.5, 4:3 = 1.33
+        if (ratio > 1.55) {
+          console.log('[DASH] CDN skip landscape', ratio.toFixed(2), url.split('/').pop());
+          return resolve();
+        }
+        imgSet.add(url); cdnSet.add(url);
+        resolve();
+      };
+      img.onerror = () => { clearTimeout(timer); resolve(); };
+      img.src = url;
     });
   }
 
