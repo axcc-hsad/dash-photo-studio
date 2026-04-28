@@ -31,22 +31,23 @@ async function clientScrape(url) {
   if (!url.includes('lg.com')) throw new Error('Not an LG URL');
 
   const info = parseUrl(url);
-  const imgs = new Set();          // collected image URLs
+  const imgs    = new Set();   // all collected image URLs
+  const cdnImgs = new Set();   // CDN-probed only (medium01-05 / _AEK_1-5) — guaranteed packshots
   let   name = info.displayName;
   let   type = info.productType;
   let   feat = [];
 
   // ── Run all parallel sources ──────────────────────────────────
   const [jinaR, cdnR, gemR] = await Promise.allSettled([
-    jinaFetch(url),                // A. Jina renders the page
-    cdnProbe(info, imgs),          // B. CDN pattern probing (fills imgs directly)
-    geminiAnalyze(url, info),      // C. Gemini reads page + web search
+    jinaFetch(url),                     // A. Jina renders the page
+    cdnProbe(info, imgs, cdnImgs),      // B. CDN pattern probing (fills both sets)
+    geminiAnalyze(url, info),           // C. Gemini reads page + web search
   ]);
 
-  // ── Merge: Jina ───────────────────────────────────────────────
+  // ── Merge: Jina — text info only if CDN images found; images always added ──
   if (jinaR.status === 'fulfilled') {
     const j = jinaR.value;
-    j.images.forEach(u => imgs.add(u));
+    j.images.forEach(u => imgs.add(u));   // jina images go into fallback pool only
     if (j.title) name = j.title;
     if (j.features.length) feat = j.features;
     console.log('[DASH] Jina: ok,', j.images.length, 'images');
@@ -54,7 +55,7 @@ async function clientScrape(url) {
     console.warn('[DASH] Jina failed:', jinaR.reason?.message);
   }
 
-  // ── Merge: Gemini (highest priority for text; also adds images) ──
+  // ── Merge: Gemini (highest priority for text; images go to fallback pool) ──
   if (gemR.status === 'fulfilled' && gemR.value) {
     const g = gemR.value;
     if (g.productName)            name = g.productName;
@@ -66,7 +67,9 @@ async function clientScrape(url) {
     console.warn('[DASH] Gemini failed:', gemR.reason?.message);
   }
 
-  console.log('[DASH] total images found:', imgs.size);
+  // CDN-probed images are already in imgs too; log both counts
+  cdnImgs.forEach(u => imgs.add(u));
+  console.log('[DASH] total images found:', imgs.size, '| CDN gallery:', cdnImgs.size);
 
   // ── Last resort: CORS proxy ───────────────────────────────────
   if (imgs.size === 0) {
@@ -84,7 +87,7 @@ async function clientScrape(url) {
     throw new Error('NO_IMAGES: Could not retrieve product images');
   }
 
-  return await buildResult(imgs, name, type, feat);
+  return await buildResult(imgs, cdnImgs, name, type, feat);
 }
 
 // ══ A. JINA.AI READER ════════════════════════════════════════════
@@ -166,9 +169,16 @@ async function jinaFetch(url) {
 // Uses browser Image() — no CORS restriction on image loading
 // IMPORTANT: never probe D* patterns (D01.jpg = Dimension drawing)
 // Limit to slots 1-5 only — slot 6+ are usually spec/back images
-async function cdnProbe(info, imgSet) {
+async function cdnProbe(info, imgSet, cdnSet = new Set()) {
   const { market, category, slug, modelRaw, modelBase } = info;
   if (!slug) return;
+
+  // Local probe: on success, add to BOTH the shared pool AND the CDN-only set
+  function probeUrl(url) {
+    return imgExists(url).then(ok => {
+      if (ok) { imgSet.add(url); cdnSet.add(url); }
+    });
+  }
 
   const probes = [];
   // Prefer modelBase (no variant suffix) to reduce duplicates
@@ -182,9 +192,8 @@ async function cdnProbe(info, imgSet) {
   for (let n = 1; n <= 5; n++) {
     const pad = String(n).padStart(2, '0');
     for (const ext of ['jpg', 'png']) {
-      probes.push(probe(
-        `https://www.lg.com/content/dam/channel/wcms/${market}/images/${category}/${slug}/gallery/medium${pad}.${ext}`,
-        imgSet
+      probes.push(probeUrl(
+        `https://www.lg.com/content/dam/channel/wcms/${market}/images/${category}/${slug}/gallery/medium${pad}.${ext}`
       ));
     }
   }
@@ -193,9 +202,8 @@ async function cdnProbe(info, imgSet) {
   for (const model of models) {
     for (let n = 1; n <= 5; n++) {
       for (const sfx of mkSufx) {
-        probes.push(probe(
-          `https://gscs-b2c.lge.com/lglib/goldimage/${model}/${model}${sfx}_${n}.jpg`,
-          imgSet
+        probes.push(probeUrl(
+          `https://gscs-b2c.lge.com/lglib/goldimage/${model}/${model}${sfx}_${n}.jpg`
         ));
       }
     }
@@ -206,9 +214,8 @@ async function cdnProbe(info, imgSet) {
     const lm = model.toLowerCase();
     for (let n = 1; n <= 5; n++) {
       const pad = String(n).padStart(2, '0');
-      probes.push(probe(
-        `https://www.lg.com/content/dam/channel/wcms/us/images/${category}/lg-${lm}/gallery/medium${pad}.jpg`,
-        imgSet
+      probes.push(probeUrl(
+        `https://www.lg.com/content/dam/channel/wcms/us/images/${category}/lg-${lm}/gallery/medium${pad}.jpg`
       ));
     }
   }
@@ -216,6 +223,7 @@ async function cdnProbe(info, imgSet) {
   await Promise.all(probes);
 }
 
+// module-level probe still used by parseHtml's gallery-sibling expansion
 function probe(url, set) {
   return imgExists(url).then(ok => { if (ok) set.add(url); });
 }
@@ -370,13 +378,23 @@ async function parseHtml(html, url, info, name, type, feat) {
   // Features from __NEXT_DATA__ if not already set
   if (!feat.length && nextData) { const fs = new Set(); collectFeat(nextData, fs, 0); feat = [...fs].slice(0, 5); }
 
-  return await buildResult(imgs, name || info.displayName, type || info.productType, feat);
+  return await buildResult(imgs, new Set(), name || info.displayName, type || info.productType, feat);
 }
 
 // ══ RESULT BUILDER ════════════════════════════════════════════════
-async function buildResult(imgSet, productName, productType, productFeatures) {
+async function buildResult(imgSet, cdnImgs, productName, productType, productFeatures) {
+  // ── CDN-first strategy ────────────────────────────────────────
+  // CDN-probed images (medium01-05 / _AEK_1-5) are guaranteed packshots —
+  // they are never video thumbnails or campaign images.
+  // When any CDN gallery images exist, use ONLY those and skip Jina/Gemini URLs.
+  const hasCdnGallery = cdnImgs && cdnImgs.size > 0;
+  const source = hasCdnGallery ? cdnImgs : imgSet;
+  if (hasCdnGallery) {
+    console.log('[DASH] CDN-first mode: using', cdnImgs.size, 'gallery images exclusively');
+  }
+
   // 1. Hard-filter obvious bad images by URL pattern
-  const pool = [...imgSet]
+  const pool = [...source]
     .filter(imgUrl)
     .filter(u => !isSpecImage(u))
     .filter(u => !/\d{1,2}x\d{1,2}(?!\d)/.test(u))
@@ -451,10 +469,16 @@ function isSpecImage(url) {
   if (/_[Dd]\d+\.[a-z]{2,4}$/i.test(url.split('/').pop())) return true;
   // Video files or video CDNs
   if (/youtube\.com|ytimg\.com|vimeo\.com|\.mp4|\.webm|\.mov/i.test(u)) return true;
-  // LG campaign / feature / highlight sections (people-focused, not product packshot)
+  // LG campaign / feature / highlight / banner sections
   if (/\/feature[s]?\/|\/highlight[s]?\/|\/campaign[s]?\/|\/hero-video\//i.test(u)) return true;
-  // Video thumbnails embedded in page
-  if (/video[-_]thumb|vid[-_]poster|videoimg/i.test(u)) return true;
+  if (/\/banner\/|\/promo\/|\/landing\/|\/teaser\//i.test(u)) return true;
+  // Video thumbnails by naming convention
+  if (/video[-_]thumb|vid[-_]poster|videoimg|video-image|vid-img/i.test(u)) return true;
+  // LG feature/UI showcase images: typically 16:9 crops (1280x720, 800x450, 960x540)
+  // These appear as video-like thumbnail overlays on product pages
+  if (/[_-]1280x720[_.-]|[_-]800x450[_.-]|[_-]960x540[_.-]|[_-]1920x1080[_.-]/i.test(u)) return true;
+  // LG-specific "area thumbnail" / UI feature image naming
+  if (/_at_\d|[-_]ui[-_]|[-_]scene\d|[-_]banner\d/i.test(u)) return true;
   return false;
 }
 
