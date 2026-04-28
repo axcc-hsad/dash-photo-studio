@@ -414,7 +414,7 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
     .filter(u => !isSpecImage(u))
     .filter(u => !/\d{1,2}x\d{1,2}(?!\d)/.test(u))
     .filter(u => !/[_-]\d{2,3}x\d{2,3}[_.-]/i.test(u))
-    .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u));
+    .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u))
 
   // 2. Deduplicate: same slot number = same physical image from different CDNs
   //    e.g. medium01.jpg + GSXV80PZLE_AEK_1.jpg → keep highest-scored URL for slot 1
@@ -628,8 +628,8 @@ function isSpecImage(url) {
   if (/dimension|install(?:ation)?|spec[_-]|schematic|diagram|drawing|manual|technical|measure/i.test(u)) return true;
   if (/\/[Dd]\d+\.[a-z]{2,4}/i.test(url)) return true;
   if (/_[Dd]\d+\.[a-z]{2,4}$/i.test(url.split('/').pop())) return true;
-  // Video files or video CDNs
-  if (/youtube\.com|ytimg\.com|vimeo\.com|\.mp4|\.webm|\.mov/i.test(u)) return true;
+  // Video files or video CDNs (play button is CSS overlay — not in image file — but URL reveals source)
+  if (/youtube\.com|ytimg\.com|vimeo\.com|wistia\.com|brightcove\.net|\.mp4|\.webm|\.mov/i.test(u)) return true;
   // LG campaign / feature / highlight / banner sections
   if (/\/feature[s]?\/|\/highlight[s]?\/|\/campaign[s]?\/|\/hero-video\//i.test(u)) return true;
   if (/\/banner\/|\/promo\/|\/landing\/|\/teaser\//i.test(u)) return true;
