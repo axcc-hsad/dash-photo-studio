@@ -49,6 +49,7 @@ const T = {
       asia: { label:'Modern & Elegant',  desc:'세련되고 깔끔한 아시안 컨템포러리',   img:'assets/style-asia.png' },
       la:   { label:'Warm & Natural',    desc:'따뜻하고 자연스러운 라틴 감성',       img:'assets/style-la.png'   },
     },
+    btnNew:      '+ 새로 만들기',
     btnImgSize:  '이미지 사이즈',
     btnUpscale:  'Upscale',
     ratios: {
@@ -87,6 +88,7 @@ const T = {
     qcLabels:    ['Product integrity', 'Natural proportions', 'Background harmony', 'Style match'],
     btnDL:       'Download',
     btnEdit:     'Request edit',
+    btnNew:      '+ New Image',
     btnImgSize:  'Image Size',
     btnUpscale:  'Upscale',
     revLeft:     (n) => `${n} revision${n===1?'':'s'} left`,
@@ -196,6 +198,8 @@ function applyLang() {
   ['ko1','ko2'].forEach(id => document.getElementById(id)?.classList.toggle('on', l==='ko'));
   ['en1','en2'].forEach(id => document.getElementById(id)?.classList.toggle('on', l==='en'));
   document.getElementById('btn-start').textContent = T[l].btnStart;
+  const nb = document.getElementById('newImgBtn');
+  if (nb) nb.textContent = T[l].btnNew;
   updateInputBar();   // sets correct placeholder per current step
   // Re-stream bubble only when index screen is visible
   if (document.getElementById('idx').classList.contains('active')) {
