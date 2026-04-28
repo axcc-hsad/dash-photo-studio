@@ -471,13 +471,80 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
 }
 
 // ── Vision-based image scoring ─────────────────────────────────────
-// Fetches each candidate image as base64, sends to Gemini Flash in one
-// request, scores 0-3. Removes score-0 images (lifestyle/diagrams),
-// sorts remainder by score descending (best packshot first).
+// Sends image URLs to Gemini via urlContext (server-side fetch — no CORS).
+// Gemini scores each 0-3: 0=reject (lifestyle/diagram/wrong product),
+// 3=ideal packshot. Rejected images are removed; remainder sorted best-first.
+//
+// Fallback: if urlContext fails, tries individual image fetch via proxy.
 async function visionScoreImages(candidates, productType) {
   const key = CONFIG.GEMINI_API_KEY;
 
-  // Fetch all images as base64 in parallel (best-effort — skip on failure)
+  // ── Primary: urlContext (Gemini fetches URLs from Google servers — no CORS) ──
+  try {
+    return await _visionByUrlContext(candidates, productType, key);
+  } catch (e) {
+    console.warn('[DASH] Vision urlContext failed:', e.message, '— trying base64 fallback');
+  }
+
+  // ── Fallback: fetch as base64 via CORS proxies ────────────────────
+  try {
+    return await _visionByBase64(candidates, productType, key);
+  } catch (e) {
+    console.warn('[DASH] Vision base64 fallback also failed:', e.message);
+    return candidates;   // give up — return original order
+  }
+}
+
+// Primary path: pass URLs directly; Gemini's urlContext loads them server-side
+async function _visionByUrlContext(candidates, productType, key) {
+  const urlList = candidates.map((c, i) => `Image ${i + 1}: ${c.url}`).join('\n');
+
+  const body = {
+    contents: [{
+      parts: [{ text: `You are an LG product image quality evaluator.
+Please access each image URL below and score it for use as a product packshot in lifestyle image compositing.
+
+${urlList}
+
+Scoring rules (score each image 0–3):
+3 = Ideal: LG ${productType} front-facing, white/plain neutral background, no people, no text overlay
+2 = Acceptable: product clearly visible, slight angle or studio-colored background
+1 = Poor: back view only, side-profile only, product very small, heavily cropped
+0 = REJECT: lifestyle shot with people in a room, dimension/spec diagram, wrong product type (e.g. washer shown on TV page), extreme lifestyle crop with no recognisable product, video thumbnail, marketing banner
+
+Return ONLY a JSON array (no explanation):
+[{"i":1,"score":3},{"i":2,"score":0},...] — one object per image.` }],
+    }],
+    tools: [{ urlContext: {} }],
+  };
+
+  const res = await fetchT(
+    `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
+    { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) },
+    35000
+  );
+  if (!res.ok) throw new Error(`urlContext API ${res.status}`);
+
+  const data  = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  const text  = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '';
+  const match = text.match(/\[[\s\S]*?\]/);
+  if (!match) throw new Error('No JSON array in urlContext response');
+
+  const scores   = JSON.parse(match[0]);
+  const scoreMap = new Map(scores.map(s => [s.i - 1, s.score]));   // 0-indexed
+
+  const scored = candidates.map((c, i) => ({ ...c, vScore: scoreMap.get(i) ?? 2 }));
+  console.log('[DASH] urlContext vision scores:', scored.map(s=>`${s.url.split('/').pop()}→${s.vScore}`).join(', '));
+
+  return scored
+    .filter(c => c.vScore > 0)
+    .sort((a, b) => b.vScore - a.vScore)
+    .map(({ vScore, ...rest }) => rest);
+}
+
+// Fallback path: fetch each image as base64 via CORS proxy, send inline
+async function _visionByBase64(candidates, productType, key) {
   const fetched = await Promise.all(candidates.map(async (c, idx) => {
     try {
       const { b64, mime } = await fetchImageAsBase64(c.url);
@@ -488,62 +555,41 @@ async function visionScoreImages(candidates, productType) {
   }));
 
   const loaded = fetched.filter(f => f.ok);
-  if (loaded.length === 0) {
-    console.warn('[DASH] Vision: no images could be fetched, skipping');
-    return candidates;
-  }
+  if (loaded.length === 0) throw new Error('No images fetchable via proxy');
 
-  // Build a single Gemini request with all images
   const parts = [];
   loaded.forEach((img, i) => {
     parts.push({ text: `[Image ${i + 1}]` });
     parts.push({ inlineData: { mimeType: img.mime, data: img.b64 } });
   });
-  parts.push({ text: `You are an LG product image quality evaluator.
-
-Score each image for its suitability as a product packshot (for lifestyle image compositing):
-3 = Ideal packshot: LG ${productType} clearly visible, front-facing, white or plain neutral background, no people, no text overlay
-2 = Acceptable: product clearly visible but slightly angled, or has gray/colored studio background
-1 = Poor: back view only, side-profile only, partial crop, product very small or barely visible
-0 = REJECT: lifestyle scene with people, dimension/measurement diagram, feature comparison graphics, marketing banner, video thumbnail frame, extreme close-up of just a detail
-
-Return ONLY a JSON array (no other text):
-[{"i":1,"score":3},{"i":2,"score":1},...] — one entry per image.` });
+  parts.push({ text: `Score each image 0–3 for use as an LG ${productType} packshot.
+3=ideal front-facing product on white/plain bg, 2=acceptable, 1=poor, 0=REJECT (lifestyle, diagram, wrong product).
+Return ONLY JSON: [{"i":1,"score":3},...] for all ${loaded.length} images.` });
 
   const res = await fetchT(
     `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts }] }),
-    },
+    { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts}] }) },
     30000
   );
+  if (!res.ok) throw new Error(`base64 vision API ${res.status}`);
 
-  if (!res.ok) throw new Error(`Vision API ${res.status}`);
   const data  = await res.json();
   const text  = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '[]';
   const match = text.match(/\[[\s\S]*?\]/);
-  if (!match) return candidates;
+  if (!match) throw new Error('No JSON in base64 response');
 
-  const scores = JSON.parse(match[0]);            // [{i:1,score:3}, …] — 1-indexed into loaded[]
-  const loadedScoreMap = new Map(scores.map(s => [s.i - 1, s.score]));  // 0-indexed
+  const scores = JSON.parse(match[0]);
+  const loadedScoreMap = new Map(scores.map(s => [s.i - 1, s.score]));
 
-  // Map vision scores back to original candidates
   const scored = fetched.map(img => ({
     ...img,
-    vScore: img.ok
-      ? (loadedScoreMap.get(loaded.findIndex(l => l.url === img.url)) ?? 2)
-      : 2,                                        // unloaded images default to 2
+    vScore: img.ok ? (loadedScoreMap.get(loaded.findIndex(l => l.url === img.url)) ?? 2) : 2,
   }));
+  console.log('[DASH] base64 vision scores:', scored.map(s=>`${s.url.split('/').pop()}→${s.vScore}`).join(', '));
 
-  console.log('[DASH] Vision scores:', scored.map(s => `${s.url.split('/').pop()}→${s.vScore}`).join(', '));
-
-  // Remove score-0 images; sort remainder best-first; strip temp fields
   return scored
     .filter(c => c.vScore > 0)
     .sort((a, b) => b.vScore - a.vScore)
-    // eslint-disable-next-line no-unused-vars
     .map(({ b64, mime, ok, idx, vScore, ...rest }) => rest);
 }
 
@@ -611,7 +657,21 @@ function parseUrl(url) {
     const category = parts[1] || '';
     const slug    = parts[parts.length - 1].replace(/\/$/, '').toLowerCase();
 
-    const modelRaw  = slug.replace(/^lg-/i, '').toUpperCase();
+    // ── Model number extraction ───────────────────────────────────
+    // LG slugs: "lg-oled55c54la-oled-tv-c5-4k"
+    //   → segments after stripping "lg-": ["oled55c54la", "oled", "tv", "c5", "4k"]
+    //   → model = first segment that is ≥5 chars AND contains both letters AND digits
+    //   This correctly yields "OLED55C54LA" rather than the whole slug.
+    const segs = slug.replace(/^lg-/i, '').split('-');
+    let modelRaw = '';
+    for (const seg of segs) {
+      if (seg.length >= 5 && /[a-z]/i.test(seg) && /\d/.test(seg)) {
+        modelRaw = seg.toUpperCase();
+        break;
+      }
+    }
+    if (!modelRaw) modelRaw = (segs[0] || slug).toUpperCase();  // fallback
+
     // Remove trailing single-letter+digit variant suffix (e.g. GSXV80PZLE1 → GSXV80PZLE)
     const modelBase = modelRaw.replace(/([A-Z])\d$/, '$1');
 
