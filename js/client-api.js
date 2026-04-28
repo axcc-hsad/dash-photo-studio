@@ -404,9 +404,8 @@ async function parseHtml(html, url, info, name, type, feat) {
 // ══ RESULT BUILDER ════════════════════════════════════════════════
 async function buildResult(imgSet, cdnImgs, productName, productType, productFeatures) {
   // ── CDN-first strategy ────────────────────────────────────────
-  // CDN-probed images (medium01-05 / _AEK_1-5) are guaranteed packshots —
-  // they are never video thumbnails or campaign images.
-  // When any CDN gallery images exist, use ONLY those and skip Jina/Gemini URLs.
+  // CDN-probed images (medium01-05 / _AEK_1-5) are preferred packshots.
+  // When any CDN gallery images exist, use those first; fall back to full pool.
   const hasCdnGallery = cdnImgs && cdnImgs.size > 0;
   const source = hasCdnGallery ? cdnImgs : imgSet;
   if (hasCdnGallery) {
@@ -434,11 +433,30 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
   const VIEW_LABELS = ['Front View', 'Side View', '3/4 Angle', 'Detail Shot', 'Lifestyle'];
   const QC_SCORES   = [4.8, 4.3, 4.0, 3.7, 3.5];
 
-  const candidateImages = finalUrls.slice(0, 5).map((url, i) => ({
+  let candidateImages = finalUrls.slice(0, 5).map((url, i) => ({
     url,
     label: VIEW_LABELS[i] || `View ${i + 1}`,
     score: QC_SCORES[i]  || 3.0,
   }));
+
+  // 4. Vision scoring: Gemini Flash analyzes each image and removes
+  //    lifestyle shots, campaign crops, dimension diagrams, etc.
+  //    This catches bad images that slip past URL-pattern filters.
+  if (candidateImages.length > 0) {
+    try {
+      const ranked = await visionScoreImages(candidateImages, productType);
+      if (ranked.length > 0) {
+        candidateImages = ranked.map((c, i) => ({
+          ...c,
+          label: VIEW_LABELS[i] || `View ${i + 1}`,
+          score: QC_SCORES[i]  || 3.0,
+        }));
+        console.log('[DASH] Vision ranking done:', candidateImages.length, 'images kept');
+      }
+    } catch (e) {
+      console.warn('[DASH] Vision scoring skipped:', e.message);
+    }
+  }
 
   if (!candidateImages.length) {
     candidateImages.push({ url: 'https://placehold.co/400x400/eee/555?text=No+Image', label: 'Product', score: 3.0 });
@@ -450,6 +468,83 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
     candidateImages,
     productFeatures: (productFeatures || []).filter(f => typeof f === 'string' && f.length > 3),
   };
+}
+
+// ── Vision-based image scoring ─────────────────────────────────────
+// Fetches each candidate image as base64, sends to Gemini Flash in one
+// request, scores 0-3. Removes score-0 images (lifestyle/diagrams),
+// sorts remainder by score descending (best packshot first).
+async function visionScoreImages(candidates, productType) {
+  const key = CONFIG.GEMINI_API_KEY;
+
+  // Fetch all images as base64 in parallel (best-effort — skip on failure)
+  const fetched = await Promise.all(candidates.map(async (c, idx) => {
+    try {
+      const { b64, mime } = await fetchImageAsBase64(c.url);
+      return { ...c, b64, mime, idx, ok: true };
+    } catch {
+      return { ...c, idx, ok: false };
+    }
+  }));
+
+  const loaded = fetched.filter(f => f.ok);
+  if (loaded.length === 0) {
+    console.warn('[DASH] Vision: no images could be fetched, skipping');
+    return candidates;
+  }
+
+  // Build a single Gemini request with all images
+  const parts = [];
+  loaded.forEach((img, i) => {
+    parts.push({ text: `[Image ${i + 1}]` });
+    parts.push({ inlineData: { mimeType: img.mime, data: img.b64 } });
+  });
+  parts.push({ text: `You are an LG product image quality evaluator.
+
+Score each image for its suitability as a product packshot (for lifestyle image compositing):
+3 = Ideal packshot: LG ${productType} clearly visible, front-facing, white or plain neutral background, no people, no text overlay
+2 = Acceptable: product clearly visible but slightly angled, or has gray/colored studio background
+1 = Poor: back view only, side-profile only, partial crop, product very small or barely visible
+0 = REJECT: lifestyle scene with people, dimension/measurement diagram, feature comparison graphics, marketing banner, video thumbnail frame, extreme close-up of just a detail
+
+Return ONLY a JSON array (no other text):
+[{"i":1,"score":3},{"i":2,"score":1},...] — one entry per image.` });
+
+  const res = await fetchT(
+    `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts }] }),
+    },
+    30000
+  );
+
+  if (!res.ok) throw new Error(`Vision API ${res.status}`);
+  const data  = await res.json();
+  const text  = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '[]';
+  const match = text.match(/\[[\s\S]*?\]/);
+  if (!match) return candidates;
+
+  const scores = JSON.parse(match[0]);            // [{i:1,score:3}, …] — 1-indexed into loaded[]
+  const loadedScoreMap = new Map(scores.map(s => [s.i - 1, s.score]));  // 0-indexed
+
+  // Map vision scores back to original candidates
+  const scored = fetched.map(img => ({
+    ...img,
+    vScore: img.ok
+      ? (loadedScoreMap.get(loaded.findIndex(l => l.url === img.url)) ?? 2)
+      : 2,                                        // unloaded images default to 2
+  }));
+
+  console.log('[DASH] Vision scores:', scored.map(s => `${s.url.split('/').pop()}→${s.vScore}`).join(', '));
+
+  // Remove score-0 images; sort remainder best-first; strip temp fields
+  return scored
+    .filter(c => c.vScore > 0)
+    .sort((a, b) => b.vScore - a.vScore)
+    // eslint-disable-next-line no-unused-vars
+    .map(({ b64, mime, ok, idx, vScore, ...rest }) => rest);
 }
 
 // Extract a "slot number" from a URL (1 = first product shot, 5 = fifth, 99 = unknown/bad)
