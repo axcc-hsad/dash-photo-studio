@@ -128,7 +128,7 @@ const RATIO_DIMS = {
 
 // ══ State ════════════════════════════════════════════════════════
 const S = {
-  lang:'ko', step:'IDLE', busy:false,
+  lang:'en', step:'IDLE', busy:false,
   pdpUrl:'', productName:'', productType:'fridge',
   productFeatures:[],
   candidates:[], pickedIdx:0,
@@ -463,20 +463,30 @@ async function showResult(imgUrl, qc) {
 }
 
 // ══ Revision ═════════════════════════════════════════════════════
+// 칩별 아이콘 매핑
+const CHIP_ICONS = {
+  'Square 1:1':'⬛', 'Landscape 16:9':'▬', 'Portrait 4:5':'▮', 'Upscale Image':'⬆',
+  '정사각형 1:1':'⬛', '가로 16:9':'▬',    '세로 4:5':'▮',    '이미지 업스케일링':'⬆',
+};
+
 async function showRevPanel() {
   if (S.revisions >= S.maxRev) { await stream(t('noRev')); return; }
   setBusy(true);
   await stream(t('revQ'), () => {
     const wrap = document.createElement('div');
     wrap.className = 'rich-block';
-    const chips = t('revChips');
-    const styleChips = chips.slice(0, 6);
-    const sizeChips  = chips.slice(6);
+    const chips      = t('revChips');
+    const sizeChips  = chips.slice(6);   // 비율·업스케일 → 상단 우선
+    const styleChips = chips.slice(0, 6); // 스타일 수정 → 하단
+    const chipBtn = c => {
+      const icon = CHIP_ICONS[c] ? `<span style="margin-right:4px">${CHIP_ICONS[c]}</span>` : '';
+      return `<button class="rev-chip" onclick="applyRev('${esc(c)}')">${icon}${c}</button>`;
+    };
     wrap.innerHTML = `
       <div class="rev-chips">
-        ${styleChips.map(c => `<button class="rev-chip" onclick="applyRev('${esc(c)}')">${c}</button>`).join('')}
+        ${sizeChips.map(chipBtn).join('')}
         <hr class="rev-divider"/>
-        ${sizeChips.map(c => `<button class="rev-chip" onclick="applyRev('${esc(c)}')">${c}</button>`).join('')}
+        ${styleChips.map(chipBtn).join('')}
       </div>`;
     return wrap;
   });
