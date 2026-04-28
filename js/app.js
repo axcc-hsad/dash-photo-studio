@@ -517,8 +517,8 @@ async function showResult(imgUrl, qc) {
         <button class="act-btn primary" onclick="doDownload()">${t('btnDL')}</button>
         ${rem > 0
           ? `<button class="act-btn outline" onclick="showRevPanel()">${t('btnEdit')}</button>
-             <button class="act-btn outline" onclick="showRevPanel()">◼ ▬ ▮ ${t('btnImgSize')}</button>
-             <button class="act-btn outline" onclick="showRevPanel()">✨ ${t('btnUpscale')}</button>
+             <button class="act-btn outline" onclick="showRevPanel()">${t('btnImgSize')}</button>
+             <button class="act-btn outline" onclick="showRevPanel()">${t('btnUpscale')}</button>
              <span class="rev-remain">${t('revLeft', rem)}</span>`
           : `<button class="act-btn ghost" onclick="doReset()">${t('btnReset')}</button>`}
       </div>`;
@@ -532,8 +532,8 @@ async function showResult(imgUrl, qc) {
 // ══ Revision ═════════════════════════════════════════════════════
 // 칩별 아이콘 매핑
 const CHIP_ICONS = {
-  'Square 1:1':'◼', 'Landscape 16:9':'▬', 'Portrait 4:5':'▮', 'Upscale Image':'✨',
-  '정사각형 1:1':'◼', '가로 16:9':'▬',    '세로 4:5':'▮',    '이미지 업스케일링':'✨',
+  'Square 1:1':'◼', 'Landscape 16:9':'▬', 'Portrait 4:5':'▮', 'Upscale Image':'✦',
+  '정사각형 1:1':'◼', '가로 16:9':'▬',    '세로 4:5':'▮',    '이미지 업스케일링':'✦',
 };
 
 async function showRevPanel() {
