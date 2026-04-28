@@ -322,7 +322,7 @@ function pickImg(i) {
 function confirmImg() {
   if (S.step !== 'IMAGES') return;   // guard: ignore stale button clicks
   freezeButtons();
-  userSay(S.lang === 'ko' ? '이 이미지로 선택할게' : 'Selected this image');
+  userSay(S.lang === 'ko' ? '이 이미지로 선택할게요.' : 'Selected this image');
   S.step = 'REGION';
   setTimeout(() => showRegion(), 200);
 }
@@ -393,8 +393,8 @@ Photorealistic, high-end commercial photography quality.`;
 // To end: stop.stopped = true; await progressPromise;
 async function streamGenProgress(stopSignal, mode = 'gen') {
   const ko = mode === 'rev'
-    ? ['수정사항을 반영하는 중이야.', '조금만 기다려줘...', '거의 다 됐어!', '마무리 중이야, 잠깐만.']
-    : ['지금 이미지를 합성하고 있어.', '조금만 기다려줘...', '거의 다 됐어!', '잠시만, 마무리 중이야.'];
+    ? ['수정사항을 반영하는 중이에요.', '조금만 기다려주세요...', '거의 다 됐어요!', '마무리 중이에요, 잠시만요.']
+    : ['지금 이미지를 합성하고 있어요.', '조금만 기다려주세요...', '거의 다 됐어요!', '잠시만요, 마무리 중입니다.'];
   const en = mode === 'rev'
     ? ['Applying your revision now.', 'Just a moment...', 'Almost there!', 'Finishing up.']
     : ['Generating your lifestyle image now.', 'Just a moment...', 'Almost there!', 'Adding the finishing touches.'];
