@@ -528,7 +528,8 @@ Return ONLY a JSON array (no explanation):
   const data  = await res.json();
   if (data.error) throw new Error(data.error.message);
   const text  = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '';
-  const match = text.match(/\[[\s\S]*?\]/);
+  // Use greedy match to capture the full array (non-greedy cuts off early on nested content)
+  const match = text.match(/\[[\s\S]+\]/);
   if (!match) throw new Error('No JSON array in urlContext response');
 
   const scores   = JSON.parse(match[0]);
@@ -575,7 +576,7 @@ Return ONLY JSON: [{"i":1,"score":3},...] for all ${loaded.length} images.` });
 
   const data  = await res.json();
   const text  = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '[]';
-  const match = text.match(/\[[\s\S]*?\]/);
+  const match = text.match(/\[[\s\S]+\]/);
   if (!match) throw new Error('No JSON in base64 response');
 
   const scores = JSON.parse(match[0]);
@@ -855,7 +856,18 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
 // ── 제품 이미지 URL → base64 변환 ─────────────────────────────────
 // 직접 fetch → CORS 프록시 순으로 시도
 async function fetchImageAsBase64(url) {
-  // 1. 직접 fetch
+  // 1. wsrv.nl — purpose-built image proxy, server-side fetch, no CORS restriction
+  //    Best choice for CDN images (LG, etc.) that block browser fetch()
+  try {
+    const enc = encodeURIComponent(url);
+    const res = await fetchT(`https://wsrv.nl/?url=${enc}&output=jpg&q=85&maxage=1d`, {}, 14000);
+    if (res.ok && res.headers.get('content-type')?.startsWith('image/')) {
+      const blob = await res.blob();
+      return { b64: await blobToBase64(blob), mime: 'image/jpeg' };
+    }
+  } catch {}
+
+  // 2. 직접 fetch (works if server allows CORS — e.g. gscs-b2c.lge.com)
   try {
     const res = await fetchT(url, {}, 12000);
     if (res.ok) {
@@ -865,25 +877,21 @@ async function fetchImageAsBase64(url) {
     }
   } catch {}
 
-  // 2. allorigins raw proxy
+  // 3. allorigins raw proxy
   try {
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-    const res = await fetchT(proxyUrl, {}, 12000);
+    const res = await fetchT(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, {}, 12000);
     if (res.ok) {
       const blob = await res.blob();
-      const mime = guessMime(url);
-      return { b64: await blobToBase64(blob), mime };
+      return { b64: await blobToBase64(blob), mime: guessMime(url) };
     }
   } catch {}
 
-  // 3. corsproxy.io
+  // 4. corsproxy.io
   try {
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-    const res = await fetchT(proxyUrl, {}, 12000);
+    const res = await fetchT(`https://corsproxy.io/?${encodeURIComponent(url)}`, {}, 12000);
     if (res.ok) {
       const blob = await res.blob();
-      const mime = guessMime(url);
-      return { b64: await blobToBase64(blob), mime };
+      return { b64: await blobToBase64(blob), mime: guessMime(url) };
     }
   } catch {}
 
