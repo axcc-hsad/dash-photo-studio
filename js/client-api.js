@@ -303,9 +303,10 @@ If you cannot access the page, infer productType from the URL path and leave ima
 function normalizeType(t) {
   if (!t) return null;
   const s = String(t).toLowerCase();
-  if (/fridge|refrig|freezer/.test(s)) return 'fridge';
-  if (/wash|dryer/.test(s))            return 'washer';
-  if (/tv|oled|qned|display/.test(s))  return 'tv';
+  if (/fridge|refrig|freezer/.test(s))       return 'fridge';
+  if (/wash|dryer/.test(s))                  return 'washer';
+  if (/monitor|ultrawide|curved.?screen/.test(s)) return 'monitor';
+  if (/tv|oled|qned|display|soundbar/.test(s)) return 'tv';
   return 'appliance';
 }
 
@@ -441,13 +442,19 @@ function deduplicateBySlot(urls) {
     .map(([, url]) => url);
 }
 
-// URL-based filter: reject images that are clearly spec/dimension drawings
+// URL-based filter: reject spec drawings, videos, campaign/people images
 function isSpecImage(url) {
-  if (/dimension|install(?:ation)?|spec[_-]|schematic|diagram|drawing|manual|technical|measure/i.test(url)) return true;
-  // /gallery/D01.jpg, /gallery/D02.jpg → Dimension
+  const u = url.toLowerCase();
+  // Dimension drawings
+  if (/dimension|install(?:ation)?|spec[_-]|schematic|diagram|drawing|manual|technical|measure/i.test(u)) return true;
   if (/\/[Dd]\d+\.[a-z]{2,4}/i.test(url)) return true;
-  // _D1.jpg, _D2.jpg
   if (/_[Dd]\d+\.[a-z]{2,4}$/i.test(url.split('/').pop())) return true;
+  // Video files or video CDNs
+  if (/youtube\.com|ytimg\.com|vimeo\.com|\.mp4|\.webm|\.mov/i.test(u)) return true;
+  // LG campaign / feature / highlight sections (people-focused, not product packshot)
+  if (/\/feature[s]?\/|\/highlight[s]?\/|\/campaign[s]?\/|\/hero-video\//i.test(u)) return true;
+  // Video thumbnails embedded in page
+  if (/video[-_]thumb|vid[-_]poster|videoimg/i.test(u)) return true;
   return false;
 }
 
@@ -473,7 +480,8 @@ function parseUrl(url) {
     const productType =
       /refrigerat|fridge|freezer|lrmv|lfxs|gsxv|gsx|instaview/.test(uLow) ? 'fridge'   :
       /washer|dryer|wm\d|dlex|dlgx/.test(uLow)                             ? 'washer'   :
-      /oled|qned|nano|tv|65u|55u|75u|c3|c4|g3|g4/.test(uLow)              ? 'tv'       : 'appliance';
+      /monitor|ultrawide|34w|27u|32u/.test(uLow)                           ? 'monitor'  :
+      /oled|qned|nano|tv|65u|55u|75u|c3|c4|c5|g3|g4|g5/.test(uLow)       ? 'tv'       : 'appliance';
 
     const displayName = 'LG ' + modelRaw;
 
@@ -490,15 +498,20 @@ function imgUrl(u) {
 
 function lgScore(url) {
   let s = 0;
-  if (url.includes('gscs-b2c.lge.com'))                s += 10;
-  if (url.includes('/content/dam'))                     s += 8;
-  if (/[A-Z]{2,}[-_]\d{3,}/i.test(url))               s += 5;
-  if (/(?:main|hero|front|primary|featured)/i.test(url)) s += 6;
-  if (/gallery|product/i.test(url))                    s += 4;
-  if (/medium0[1-3]/i.test(url))                       s += 5;
-  if (/\d{3,4}x\d{3,4}/.test(url))                    s -= 3;
-  if (/(?:2000|1600|1200|900|large|xl)/i.test(url))    s += 3;
-  if (/thumbnail|thumb|small|xs|_s\./i.test(url))      s -= 5;
+  if (url.includes('gscs-b2c.lge.com'))                  s += 10;
+  if (url.includes('/content/dam'))                       s += 8;
+  if (/[A-Z]{2,}[-_]\d{3,}/i.test(url))                  s += 5;
+  if (/(?:main|hero|front|primary|featured)/i.test(url))  s += 6;
+  if (/gallery|product/i.test(url))                       s += 4;
+  if (/medium0[1-3]/i.test(url))                          s += 5;
+  // 누끼/화이트배경 패키지샷 우선
+  if (/packshot|cutout|white[-_]?bg|_wh\.|studio/i.test(url)) s += 10;
+  if (/\.png$/i.test(url))                                s += 6;  // PNG = 보통 투명/흰배경
+  // 라이프스타일/사람/캠페인 이미지 감점
+  if (/lifestyle|campaign|feature[s]?[-_]|highlight/i.test(url)) s -= 8;
+  if (/\d{3,4}x\d{3,4}/.test(url))                       s -= 3;
+  if (/(?:2000|1600|1200|900|large|xl)/i.test(url))       s += 3;
+  if (/thumbnail|thumb|small|xs|_s\./i.test(url))         s -= 5;
   return s;
 }
 

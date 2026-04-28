@@ -116,10 +116,11 @@ const STYLES = {
   la:   { space:'warm Latin American kitchen or living room', mood:'warm, lively, welcoming, natural', palette:'warm beige, terracotta, olive green, honey wood', light:'warm natural light, golden tone', props:'fruit bowl, fabric runner, plant, ceramics', avoid:'no sterile space, no cold blue light, no crowded props' },
 };
 const PRODUCT_CTX = {
-  fridge:'large refrigerator as the hero, front-facing, door handles clearly visible',
-  washer:'washing machine centered, door porthole and control panel visible',
-  tv:'LG TV as hero, mounted or on stand, slim bezels visible',
-  appliance:'LG home appliance as hero, clearly visible and unobstructed',
+  fridge:  'large refrigerator as the hero, front-facing, door handles clearly visible, plain white or studio background',
+  washer:  'washing machine centered, door porthole and control panel visible, plain white or studio background',
+  tv:      'LG OLED TV as the hero, wall-mounted or on a sleek stand, ultra-thin bezels prominent; the screen must display a vivid cinematic movie scene or a vibrant video game scene — rich saturated colors, no black screen, no reflection, no mirroring',
+  monitor: 'LG monitor as the hero, on a desk, ultra-thin bezels prominent; the screen must display a vivid cinematic movie scene or dynamic creative content — rich colors, no black screen',
+  appliance:'LG home appliance as hero, clearly visible and unobstructed, plain white or studio background',
 };
 const RATIO_DIMS = {
   square:{w:1024,h:1024}, landscape:{w:1344,h:768}, portrait:{w:832,h:1040},
@@ -300,6 +301,7 @@ function imageGrid() {
     </div>
     <div class="act-row" style="margin-top:12px;justify-content:center">
       <button class="act-btn primary" onclick="confirmImg()">${t('btnPick')}</button>
+      <button class="act-btn outline" onclick="doResetUrl()">${S.lang==='ko'?'URL 다시 입력':'Re-enter URL'}</button>
     </div>`;
   return wrap;
 }
@@ -622,6 +624,20 @@ function doDownload() {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+function doResetUrl() {
+  // URL 입력 단계로만 되돌아가기 (채팅화면 유지)
+  $msgs.innerHTML = ''; $hist.innerHTML = '';
+  $hist.classList.remove('show');
+  Object.assign(S, {
+    step:'URL', busy:false,
+    pdpUrl:'', productName:'', productType:'fridge', productFeatures:[],
+    candidates:[], pickedIdx:0, region:'', ratio:'square',
+    genPrompt:'', resultUrl:'', lastQc:null, revisions:0, history:[],
+  });
+  updateInputBar();
+  setTimeout(() => stream(t('step1')), 200);
 }
 
 function doReset() {
