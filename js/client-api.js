@@ -424,17 +424,47 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
     .filter(u => !/[_-]\d{2,3}x\d{2,3}[_.-]/i.test(u))
     .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u));
 
-  // 1b. In Jina-fallback mode (no CDN gallery), Jina scrapes the ENTIRE page including
-  //     related product sections (washers on a TV page, etc.).
-  //     If the product slug is known, prefer images whose URL contains that slug —
-  //     those come from this product's own CDN path, not cross-promotions.
+  // 1b. Product-type exclusion: filter out images whose URL clearly signals a different
+  //     product category (e.g. washer URLs appearing on a TV page due to related products).
+  //     Works regardless of CDN source — catches cross-promotion images at the URL level.
+  const WRONG_PRODUCT_KEYWORDS = {
+    tv:       ['washer', 'dryer', 'washing-machine', 'laveuse', 'lave-linge', 'waschmaschine',
+               'sèche-linge', 'refrigerator', 'fridge', 'congel', 'refrigerateur',
+               'dishwasher', 'lave-vaisselle', 'vacuum', 'air-purif', 'purif-air'],
+    fridge:   ['washer', 'dryer', 'washing-machine', 'dishwasher', 'televisions', 'oled', 'qned'],
+    washer:   ['refrigerator', 'fridge', 'televisions', 'oled', 'qned', 'dishwasher'],
+    monitor:  ['washer', 'dryer', 'refrigerator', 'fridge', 'dishwasher'],
+    appliance:['televisions', 'oled', 'qned'],
+  };
+  const excludeKw = WRONG_PRODUCT_KEYWORDS[productType] || [];
+  if (excludeKw.length > 0) {
+    const before = pool.length;
+    pool = pool.filter(u => !excludeKw.some(kw => u.toLowerCase().includes(kw)));
+    if (pool.length < before) console.log('[DASH] Wrong-product filter removed', before - pool.length, 'images');
+  }
+
+  // 1c. In Jina-fallback mode (no CDN gallery), Jina scrapes the ENTIRE page including
+  //     related product sections. Use model number (from slug) to prefer product-specific
+  //     images — these come from this product's own CDN path, not cross-promotions.
   if (!hasCdnGallery && slug) {
-    const slugPool = pool.filter(u => u.toLowerCase().includes(slug.toLowerCase()));
-    if (slugPool.length >= 2) {
-      console.log('[DASH] Slug-filter: found', slugPool.length, 'slug-matched images → using those only');
-      pool = slugPool;
+    // Derive model number: first slug segment that has ≥5 chars with both letters+digits
+    const segs  = slug.replace(/^lg-/, '').split('-');
+    const model = segs.find(s => s.length >= 5 && /[a-z]/i.test(s) && /\d/.test(s)) || '';
+
+    const bySlug  = pool.filter(u => u.toLowerCase().includes(slug.toLowerCase()));
+    const byModel = model ? pool.filter(u => u.toLowerCase().includes(model.toLowerCase())) : [];
+
+    if (bySlug.length >= 2) {
+      console.log('[DASH] Slug-filter: using', bySlug.length, 'exact-slug images');
+      pool = bySlug;
+    } else if (byModel.length >= 2) {
+      console.log('[DASH] Model-filter: using', byModel.length, 'model-matched images');
+      pool = byModel;
+    } else if (byModel.length === 1) {
+      console.log('[DASH] Model-filter: only 1 match — using model + full pool (model-first)');
+      pool = [...byModel, ...pool.filter(u => !byModel.includes(u))];
     } else {
-      console.log('[DASH] Slug-filter: only', slugPool.length, 'slug-matched images → using full pool');
+      console.log('[DASH] Slug/model filter: no matches — using full pool');
     }
   }
 
