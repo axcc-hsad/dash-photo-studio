@@ -87,7 +87,7 @@ async function clientScrape(url) {
     throw new Error('NO_IMAGES: Could not retrieve product images');
   }
 
-  return await buildResult(imgs, cdnImgs, name, type, feat, info.slug);
+  return await buildResult(imgs, cdnImgs, name, type, feat, info.slug, url);
 }
 
 // ══ A. JINA.AI READER ════════════════════════════════════════════
@@ -406,7 +406,7 @@ async function parseHtml(html, url, info, name, type, feat) {
 }
 
 // ══ RESULT BUILDER ════════════════════════════════════════════════
-async function buildResult(imgSet, cdnImgs, productName, productType, productFeatures, slug = '') {
+async function buildResult(imgSet, cdnImgs, productName, productType, productFeatures, slug = '', pageUrl = '') {
   // ── CDN-first strategy ────────────────────────────────────────
   // CDN-probed images (medium01-05 / _AEK_1-5) are preferred packshots.
   // When any CDN gallery images exist, use those first; fall back to full pool.
@@ -462,7 +462,7 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
   //    This catches bad images that slip past URL-pattern filters.
   if (candidateImages.length > 0) {
     try {
-      const ranked = await visionScoreImages(candidateImages, productType);
+      const ranked = await visionScoreImages(candidateImages, productType, pageUrl);
       if (ranked.length > 0) {
         candidateImages = ranked.map((c, i) => ({
           ...c,
@@ -494,17 +494,29 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
 // 3=ideal packshot. Rejected images are removed; remainder sorted best-first.
 //
 // Fallback: if urlContext fails, tries individual image fetch via proxy.
-async function visionScoreImages(candidates, productType) {
+async function visionScoreImages(candidates, productType, pageUrl = '') {
   const key = CONFIG.GEMINI_API_KEY;
 
-  // ── Primary: urlContext (Gemini fetches URLs from Google servers — no CORS) ──
+  // ── Primary: pageUrl approach — Gemini loads the LG product PAGE and scores ──
+  // LG product pages are accessible to Google's crawlers; Gemini can visually
+  // inspect the gallery and match scores to each image URL.
+  // This avoids needing to proxy individual CDN image files (which LG blocks).
+  if (pageUrl) {
+    try {
+      return await _visionByPageUrl(pageUrl, candidates, productType, key);
+    } catch (e) {
+      console.warn('[DASH] Vision pageUrl failed:', e.message, '— trying individual urlContext');
+    }
+  }
+
+  // ── Fallback 1: individual image URLs via urlContext ──────────────
   try {
     return await _visionByUrlContext(candidates, productType, key);
   } catch (e) {
     console.warn('[DASH] Vision urlContext failed:', e.message, '— trying base64 fallback');
   }
 
-  // ── Fallback: fetch as base64 via CORS proxies ────────────────────
+  // ── Fallback 2: fetch as base64 via CORS proxies ──────────────────
   try {
     return await _visionByBase64(candidates, productType, key);
   } catch (e) {
@@ -513,7 +525,63 @@ async function visionScoreImages(candidates, productType) {
   }
 }
 
-// Primary path: pass URLs directly; Gemini's urlContext loads them server-side
+// ── NEW PRIMARY: Load the LG PRODUCT PAGE, visually evaluate gallery images ──
+// LG pages are accessible to Google crawlers (urlContext). Gemini sees the gallery
+// images visually on the page and scores each URL we provide.
+// This avoids needing to proxy individual LG CDN image files.
+async function _visionByPageUrl(pageUrl, candidates, productType, key) {
+  const urlList = candidates.map((c, i) => `Image ${i + 1}: ${c.url}`).join('\n');
+
+  const body = {
+    contents: [{
+      parts: [{ text: `Access this LG product page:
+${pageUrl}
+
+Look at the product gallery images on the page. Then score each image URL below based on what it shows (0–3):
+
+${urlList}
+
+Scoring rules:
+3 = Ideal packshot: LG ${productType} clearly visible, front-facing or slight angle, white/plain/studio background, no people, minimal text
+2 = Acceptable: product clearly visible with slight angle or non-white background
+1 = Poor: back view, extreme side profile (product very thin), product small in frame, or heavily cropped detail
+0 = REJECT: marketing/campaign banner with large text overlay covering most of image; lifestyle scene with people in a room; wrong product type (e.g. washer on a TV page); abstract color art or texture with no product; near-empty background with no product
+
+${productType === 'tv' ? 'For TV: a TV displaying demo content/abstract art on screen is OK (score 2-3) IF the TV frame/bezel/stand are clearly visible. Large text overlay like "LG QNED evo AI 2025" covering the whole image = score 0.' : ''}
+
+Return ONLY a JSON array, no markdown, no explanation:
+[{"i":1,"score":3},{"i":2,"score":0},...]` }],
+    }],
+    tools: [{ urlContext: {} }],
+  };
+
+  const res = await fetchT(
+    `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    35000
+  );
+  if (!res.ok) throw new Error(`pageUrl vision API ${res.status}`);
+
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+
+  const text = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '';
+  const match = text.match(/\[[\s\S]+\]/);
+  if (!match) throw new Error('No JSON array in pageUrl vision response');
+
+  const scores   = JSON.parse(match[0]);
+  const scoreMap = new Map(scores.map(s => [s.i - 1, s.score]));
+
+  const scored = candidates.map((c, i) => ({ ...c, vScore: scoreMap.get(i) ?? 1 }));
+  console.log('[DASH] pageUrl vision scores:', scored.map(s => `${s.url.split('/').pop()}→${s.vScore}`).join(', '));
+
+  return scored
+    .filter(c => c.vScore > 0)
+    .sort((a, b) => b.vScore - a.vScore)
+    .map(({ vScore, ...rest }) => rest);
+}
+
+// Secondary path: pass image URLs directly; Gemini's urlContext loads them server-side
 async function _visionByUrlContext(candidates, productType, key) {
   const urlList = candidates.map((c, i) => `Image ${i + 1}: ${c.url}`).join('\n');
 
