@@ -180,6 +180,42 @@ function goHome() {
   streamIdxBubble(S.lang);
 }
 
+// ── Password Gate ─────────────────────────────────────────────────────────
+// Computes SHA-256 of the entered password and compares to CONFIG.PASS_HASH.
+// Admin changes the password by updating PASS_HASH in config.js.
+async function checkPassword() {
+  const input = document.getElementById('pw-input');
+  const hint  = document.getElementById('pw-hint');
+  const val   = (input?.value || '').trim();
+
+  if (!val) {
+    showPwError(input, hint, S.lang === 'ko' ? '비밀번호를 입력해주세요.' : 'Please enter the password.');
+    return;
+  }
+
+  // SHA-256 via Web Crypto API (supported in all modern browsers)
+  const buf  = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(val));
+  const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  if (hash === CONFIG.PASS_HASH) {
+    // Correct — clear and proceed
+    if (hint) { hint.classList.remove('show'); }
+    if (input) { input.classList.remove('error'); input.value = ''; }
+    goChat();
+  } else {
+    showPwError(input, hint, S.lang === 'ko' ? '비밀번호가 올바르지 않습니다.' : 'Incorrect password. Please try again.');
+  }
+}
+
+function showPwError(input, hint, msg) {
+  if (hint)  { hint.textContent = msg; hint.classList.add('show'); }
+  if (input) {
+    input.classList.add('error');
+    input.select();
+    setTimeout(() => input?.classList.remove('error'), 400);
+  }
+}
+
 function goChat() {
   document.getElementById('idx').classList.remove('active');
   document.getElementById('chat').classList.add('active');
@@ -200,6 +236,9 @@ function applyLang() {
   document.getElementById('btn-start').textContent = T[l].btnStart;
   const nb = document.getElementById('newImgBtn');
   if (nb) nb.textContent = T[l].btnNew;
+  // Update password input placeholder for current language
+  const pwInput = document.getElementById('pw-input');
+  if (pwInput) pwInput.placeholder = l === 'ko' ? '비밀번호를 입력해주세요' : 'Enter password';
   updateInputBar();   // sets correct placeholder per current step
   // Re-stream bubble only when index screen is visible
   if (document.getElementById('idx').classList.contains('active')) {

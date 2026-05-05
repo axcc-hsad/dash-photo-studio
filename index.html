@@ -185,6 +185,42 @@
     }
     .btn-start:hover { opacity: 0.88; transform: translateY(-1px); }
 
+    /* Password gate */
+    .pw-wrap {
+      margin: 18px auto 0;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    .pw-input {
+      width: 220px;
+      padding: 10px 16px;
+      border: 1.5px solid #D0CCC8;
+      border-radius: 22px;
+      font-size: 14px;
+      font-family: 'Inter', sans-serif;
+      color: #222;
+      outline: none;
+      text-align: center;
+      letter-spacing: 0.12em;
+      transition: border-color 0.15s;
+      background: #fff;
+    }
+    .pw-input:focus { border-color: var(--red); }
+    .pw-input.error { border-color: var(--red); animation: shake 0.3s ease; }
+    .pw-hint {
+      font-size: 11px;
+      color: #c8102e;
+      min-height: 16px;
+      font-family: 'Inter', sans-serif;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .pw-hint.show { opacity: 1; }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      25%      { transform: translateX(-6px); }
+      75%      { transform: translateX(6px); }
+    }
+
     /* Robot video on index — circular */
     .idx-robot-wrap {
       margin-top: 10px;
@@ -613,7 +649,14 @@
         Create lifestyle images for LG.COM products.<br>
         I'll help you make the image you want, easily.
       </p>
-      <button class="btn-start" id="btn-start" onclick="goChat()">Get Started</button>
+      <div class="pw-wrap">
+        <input class="pw-input" id="pw-input" type="password"
+               placeholder="Enter password"
+               autocomplete="current-password"
+               onkeydown="if(event.key==='Enter') checkPassword()" />
+        <span class="pw-hint" id="pw-hint">Incorrect password. Please try again.</span>
+      </div>
+      <button class="btn-start" id="btn-start" onclick="checkPassword()">Get Started</button>
     </div>
 
     <div class="idx-robot-wrap">
