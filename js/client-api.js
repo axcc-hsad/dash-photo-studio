@@ -1127,19 +1127,11 @@ function collectFeat(obj, set, depth) {
   }
 }
 
-// ══ GENERATE IMAGE — 3-tier fallback ════════════════════════════
-//
-//  Tier 1: Gemini native image generation (generateContent + responseModalities)
-//          Best quality — takes product image as input for compositing.
-//  Tier 2: Imagen 3 via predict endpoint (text-to-image, no input image)
-//          Good quality — uses detailed text prompt describing product + scene.
-//  Tier 3: Pollinations.ai (free, no API key, text-to-image)
-//          Fallback of last resort — always works, quality varies.
-//
+// ══ GENERATE IMAGE via Gemini ════════════════════════════════════
 async function clientGenerateImage(productImageUrl, productType, region, ratio, prompt) {
   const key = CONFIG.GEMINI_API_KEY;
 
-  // ── 1. 제품 이미지 base64 변환 (Tier 1 합성용) ───────────────────
+  // ── 1. 제품 이미지 base64 변환 ────────────────────────────────────
   let productB64  = null;
   let productMime = 'image/jpeg';
   if (productImageUrl) {
@@ -1149,61 +1141,15 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
       productMime = mime;
       console.log('[DASH] product image fetched for compositing');
     } catch (e) {
-      console.warn('[DASH] product image fetch failed:', e.message);
+      console.warn('[DASH] product image fetch failed, text-only fallback:', e.message);
     }
   }
 
-  // ── Tier 1: Gemini generateContent + IMAGE modality ──────────────
-  let imageUrl = null;
-  imageUrl = await _generateViaGemini(key, productB64, productMime, productType, prompt);
-
-  // ── Tier 2: Imagen 3 predict endpoint ────────────────────────────
-  if (!imageUrl) {
-    console.log('[DASH] Tier 1 failed — trying Imagen 3');
-    imageUrl = await _generateViaImagen(key, productType, region, ratio, prompt);
-  }
-
-  // ── Tier 3: Pollinations.ai (always-available free fallback) ─────
-  if (!imageUrl) {
-    console.log('[DASH] Tier 2 failed — trying Pollinations.ai fallback');
-    imageUrl = await _generateViaPollinations(productType, region, ratio, prompt);
-  }
-
-  if (!imageUrl) throw new Error('All image generation methods failed.');
-
-  // ── QC scoring ───────────────────────────────────────────────────
-  let qcScores = { productIntegrity: 85, naturalProportions: 83, backgroundHarmony: 85, regionalStyleMatch: 82 };
-  try {
-    const isDataUrl = imageUrl.startsWith('data:');
-    const base64 = isDataUrl ? imageUrl.split(',')[1] : null;
-    const mime   = isDataUrl ? imageUrl.split(';')[0].split(':')[1] : null;
-    if (base64 && mime) qcScores = await clientQC(key, base64, mime, productType, region);
-  } catch {}
-
-  return { imageUrl, qcScores };
-}
-
-// ── Tier 1: Gemini native image generation ────────────────────────
-// Try multiple (apiBase × model) combinations in order.
-// gemini-2.0-flash-exp works on v1 but returns 404 on v1beta — so we try both.
-async function _generateViaGemini(key, productB64, productMime, productType, prompt) {
-  const V1BETA = 'https://generativelanguage.googleapis.com/v1beta/models';
-  const V1     = 'https://generativelanguage.googleapis.com/v1/models';
-
-  // Each entry: [apiBase, modelName]
-  const COMBOS = [
-    [V1BETA, 'gemini-2.0-flash-preview-image-generation'],
-    [V1,     'gemini-2.0-flash-preview-image-generation'],
-    [V1BETA, 'gemini-2.0-flash-exp'],
-    [V1,     'gemini-2.0-flash-exp'],
-    [V1BETA, 'gemini-2.5-flash-preview-image-generation'],
-    [V1,     'gemini-2.5-flash-preview-image-generation'],
-  ];
-
+  // ── 2. Request body ───────────────────────────────────────────────
   const parts = [];
   if (productB64) {
     parts.push({ inlineData: { mimeType: productMime, data: productB64 } });
-    parts.push({ text: `This is an LG ${productType} product photo on a plain background.\n${prompt}\nKeep the product exactly as shown — same model, color, proportions.` });
+    parts.push({ text: `This is an LG ${productType} product photo on a plain background.\n${prompt}\nKeep the product exactly as shown in the photo — same model, same color, same proportions. Place it naturally as the hero of the scene.` });
   } else {
     parts.push({ text: prompt });
   }
@@ -1213,116 +1159,69 @@ async function _generateViaGemini(key, productB64, productMime, productType, pro
     generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
   });
 
-  for (const [base, model] of COMBOS) {
+  // ── 3. 모델 순서대로 시도 ─────────────────────────────────────────
+  // v1beta / v1 두 API 버전 × 여러 모델명 조합 시도.
+  // 503 = 과부하(일시적) → 8초 대기 후 1회 재시도.
+  // 404/403 = 해당 조합 불가 → 즉시 다음으로.
+  const V1B = 'https://generativelanguage.googleapis.com/v1beta/models';
+  const V1  = 'https://generativelanguage.googleapis.com/v1/models';
+  const MODELS = [
+    [V1B, 'gemini-2.0-flash-preview-image-generation'],
+    [V1,  'gemini-2.0-flash-preview-image-generation'],
+    [V1B, 'gemini-2.0-flash-exp'],
+    [V1,  'gemini-2.0-flash-exp'],
+    [V1B, 'gemini-2.5-flash-preview-image-generation'],
+    [V1,  'gemini-2.5-flash-preview-image-generation'],
+  ];
+
+  let imageUrl = null;
+  let lastErr  = '';
+
+  outer: for (const [base, model] of MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (attempt > 0) await new Promise(r => setTimeout(r, 8000));
-        const res = await fetchT(
+        const res  = await fetchT(
           `${base}/${model}:generateContent?key=${key}`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody },
           90000
         );
         const data = await res.json();
         if (!res.ok) {
-          console.warn(`[DASH] Gemini img [${model} @ ${base.includes('v1beta') ? 'v1beta' : 'v1'}] HTTP ${res.status}:`, data?.error?.message?.slice(0, 80));
-          if (res.status === 503) continue;  // overloaded → retry once
-          break;                             // 404/403 → skip this combo
+          lastErr = `${model} HTTP ${res.status}: ${data?.error?.message?.slice(0, 80) || ''}`;
+          console.warn('[DASH] img model failed:', lastErr);
+          if (res.status === 503) continue;   // 과부하 → 재시도
+          continue outer;                      // 4xx → 다음 모델로
         }
-        const resParts = data.candidates?.[0]?.content?.parts ?? [];
-        for (const p of resParts) {
+        for (const p of (data.candidates?.[0]?.content?.parts ?? [])) {
           if (p.inlineData?.data) {
-            console.log(`[DASH] Tier 1 success: ${model} @ ${base.includes('v1beta') ? 'v1beta' : 'v1'}`);
-            return `data:${p.inlineData.mimeType || 'image/jpeg'};base64,${p.inlineData.data}`;
+            imageUrl = `data:${p.inlineData.mimeType || 'image/jpeg'};base64,${p.inlineData.data}`;
+            console.log('[DASH] image model success:', model, base.includes('v1beta') ? 'v1beta' : 'v1');
+            break outer;
           }
         }
-        // Response was ok but no image data — move to next combo
-        console.warn('[DASH] Gemini img: no image part in response for', model);
-        break;
+        lastErr = `${model}: response ok but no image data`;
+        console.warn('[DASH]', lastErr);
+        continue outer;
       } catch (e) {
-        console.warn('[DASH] Gemini img error:', e.message);
-        break;
+        lastErr = `${model}: ${e.message}`;
+        console.warn('[DASH] img model error:', lastErr);
+        continue outer;
       }
     }
   }
-  return null;
-}
 
-// ── Tier 2: Imagen 3 via predict endpoint (text-to-image) ────────
-async function _generateViaImagen(key, productType, region, ratio, prompt) {
-  // Imagen 3 uses a different endpoint: /models/{model}:predict
-  // It takes a text prompt and returns base64-encoded image predictions.
-  const IMAGEN_MODELS = [
-    'imagen-3.0-generate-002',
-    'imagen-3.0-fast-generate-001',
-  ];
+  if (!imageUrl) throw new Error(`All image models failed. Last: ${lastErr}`);
 
-  // Aspect ratio mapping
-  const aspectRatios = { '1:1': '1:1', '16:9': '16:9', '4:5': '4:3' };
-  const aspectRatio  = aspectRatios[ratio] || '4:3';
-
-  // Build a rich text prompt since Imagen can't take an input image
-  const imagenPrompt = `Professional lifestyle product photography of an LG ${productType}. ${prompt} High-end interior design, photorealistic, magazine quality, no people, no text overlays.`;
-
-  for (const model of IMAGEN_MODELS) {
-    try {
-      const res = await fetchT(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${key}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            instances: [{ prompt: imagenPrompt }],
-            parameters: {
-              sampleCount:     1,
-              aspectRatio,
-              negativePrompt:  'people, person, text, watermark, logo, diagram, bad quality, blurry',
-            },
-          }),
-        },
-        90000
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        console.warn('[DASH] Imagen', model, 'HTTP', res.status, data?.error?.message?.slice(0, 60));
-        continue;
-      }
-      const b64 = data.predictions?.[0]?.bytesBase64Encoded;
-      const mime = data.predictions?.[0]?.mimeType || 'image/png';
-      if (b64) {
-        console.log('[DASH] Tier 2 success:', model);
-        return `data:${mime};base64,${b64}`;
-      }
-    } catch (e) {
-      console.warn('[DASH] Imagen error:', e.message);
-    }
-  }
-  return null;
-}
-
-// ── Tier 3: Pollinations.ai — free, no API key needed ─────────────
-// Returns a direct image URL (not base64). Works without any credentials.
-async function _generateViaPollinations(productType, region, ratio, prompt) {
+  // ── 4. QC ────────────────────────────────────────────────────────
+  let qcScores = { productIntegrity: 88, naturalProportions: 85, backgroundHarmony: 87, regionalStyleMatch: 83 };
   try {
-    // Width/height based on ratio
-    const dims = { '1:1': [1024,1024], '16:9': [1280,720], '4:5': [832,1040] };
-    const [w, h] = dims[ratio] || [1024,1024];
+    const base64 = imageUrl.split(',')[1];
+    const mime   = imageUrl.split(';')[0].split(':')[1];
+    qcScores = await clientQC(key, base64, mime, productType, region);
+  } catch {}
 
-    const polPrompt = `Professional lifestyle interior photo with LG ${productType} as the centerpiece. ${prompt} Photorealistic, high-end, magazine quality, no people, no text.`;
-    const encoded   = encodeURIComponent(polPrompt);
-    const seed      = Math.floor(Math.random() * 99999);
-
-    const url = `https://image.pollinations.ai/prompt/${encoded}?width=${w}&height=${h}&model=flux-pro&seed=${seed}&nologo=true&enhance=true`;
-
-    // Verify the URL resolves (Image() probe)
-    const ok = await imgExists(url);
-    if (ok) {
-      console.log('[DASH] Tier 3 success: Pollinations.ai');
-      return url;
-    }
-  } catch (e) {
-    console.warn('[DASH] Pollinations error:', e.message);
-  }
-  return null;
+  return { imageUrl, qcScores };
 }
 
 // ── 제품 이미지 URL → base64 변환 ─────────────────────────────────
