@@ -205,26 +205,35 @@ async function cdnProbe(info, imgSet, cdnSet = new Set()) {
   // Also try modelRaw in case CDN uses the full slug
   const models = [...new Set([modelBase, modelRaw].filter(m => m && m.length >= 4))];
   // Market suffixes for EU/US/Asia CDN filenames
-  const mkSufx = ['_AEK', '_AEKQ', '_AEK2', '_MEA', '_AU', '_CA', '_US', ''];
+  // _AEK = UK/Europe, _AEKQ = UK variant, _MEA = Middle East/Africa,
+  // _AU = Australia, _CA = Canada, _US = USA
+  const mkSufx = ['_AEK', '_AEKQ', '_AEK2', '_EEK', '_EEK2', '_MEA', '_AU', '_CA', '_US', ''];
 
   // ── LG content/dam gallery: probe BOTH full categoryPath AND single category ──
   // Full path (e.g. "tv-barres-de-son/qned") hits the correct nested CDN structure.
   // Single category is kept as fallback for simpler URL structures (/uk/tvs/lg-oled55c54la/).
+  // ── LG content/dam gallery: probe full categoryPath + single category ──────
   const catPaths = [...new Set([cdnCat, category].filter(Boolean))];
   for (const cp of catPaths) {
-    for (let n = 1; n <= 5; n++) {
+    for (let n = 1; n <= 8; n++) {      // Extended to 8 — some LG products have 6–8 gallery images
       const pad = String(n).padStart(2, '0');
       for (const ext of ['jpg', 'png']) {
         probes.push(probeUrl(
           `https://www.lg.com/content/dam/channel/wcms/${market}/images/${cp}/${slug}/gallery/medium${pad}.${ext}`
         ));
+        // Also try with lg- prefix (some UK slugs like w4x7016tbb exist without it on web but with it on CDN)
+        if (!slug.startsWith('lg-')) {
+          probes.push(probeUrl(
+            `https://www.lg.com/content/dam/channel/wcms/${market}/images/${cp}/lg-${slug}/gallery/medium${pad}.${ext}`
+          ));
+        }
       }
     }
   }
 
-  // ── gscs-b2c.lge.com goldimage CDN (global): slots 1-5 only ─
+  // ── gscs-b2c.lge.com goldimage CDN (global): slots 1-8 ─────────
   for (const model of models) {
-    for (let n = 1; n <= 5; n++) {
+    for (let n = 1; n <= 8; n++) {
       for (const sfx of mkSufx) {
         probes.push(probeUrl(
           `https://gscs-b2c.lge.com/lglib/goldimage/${model}/${model}${sfx}_${n}.jpg`
@@ -233,10 +242,10 @@ async function cdnProbe(info, imgSet, cdnSet = new Set()) {
     }
   }
 
-  // ── US content/dam gallery: medium01–05 ──────────────────────
+  // ── US content/dam gallery: medium01–08 ──────────────────────
   for (const model of models) {
     const lm = model.toLowerCase();
-    for (let n = 1; n <= 5; n++) {
+    for (let n = 1; n <= 8; n++) {
       const pad = String(n).padStart(2, '0');
       probes.push(probeUrl(
         `https://www.lg.com/content/dam/channel/wcms/us/images/${category}/lg-${lm}/gallery/medium${pad}.jpg`
@@ -273,7 +282,18 @@ Rules for productFeatures — extract REAL product key specs/USPs ONLY:
 ✗ Bad: navigation categories (TV/Audio, Appliances), cookie notices, generic phrases, site menu items
 Extract up to 5 specific technical specs or named features from the product page itself.
 
-For imageUrls: full absolute CDN URLs only (gscs-b2c.lge.com or lg.com/content/dam), max 8.
+For imageUrls: ONLY main product gallery packshot images — photos of the product itself
+on a white or plain studio background (front view, side view, 3/4 angle, open-door detail, etc.).
+On LG pages these appear in the image carousel/gallery at the top-right of the product page.
+
+Rules:
+✓ Include: product photos from the gallery carousel → CDN paths typically contain "/gallery/" or
+  follow the gscs-b2c goldimage pattern (*_AEK_1.jpg, *_AEK_2.jpg …)
+✗ Exclude: USP/feature banners (images with "AI DD", "TurboWash", feature text overlays),
+  lifestyle photos with people in a room, energy-rating graphics, dimension diagrams,
+  video thumbnails, images from the "Key Features" scroll section of the page
+
+Provide full absolute CDN URLs only (gscs-b2c.lge.com or lg.com/content/dam), max 8.
 If you cannot access the page, infer productType from the URL path and leave imageUrls empty.`;
 
   // Tool configurations to try in order
@@ -443,11 +463,21 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
     if (pool.length < before) console.log('[DASH] Wrong-product filter removed', before - pool.length, 'images');
   }
 
-  // 1c. In Jina-fallback mode (no CDN gallery), Jina scrapes the ENTIRE page including
-  //     related product sections. Use model number (from slug) to prefer product-specific
-  //     images — these come from this product's own CDN path, not cross-promotions.
-  if (!hasCdnGallery && slug) {
-    // Derive model number: first slug segment that has ≥5 chars with both letters+digits
+  // 1c. Gallery-path priority filter (STRONGEST signal of a packshot)
+  //     LG stores all gallery packshots under /gallery/medium*.jpg on content/dam,
+  //     and as *_AEK_1.jpg etc. on gscs-b2c goldimage CDN.
+  //     USP/feature images are NEVER at these specific paths → use them exclusively.
+  const galleryMediumUrls = pool.filter(u => /\/gallery\/medium\d+\./i.test(u));
+  const goldimageUrls     = pool.filter(u => /gscs-b2c\.lge\.com.+_\d+\.jpg/i.test(u));
+  const strictGallery     = [...new Set([...galleryMediumUrls, ...goldimageUrls])];
+
+  if (strictGallery.length >= 1) {
+    console.log('[DASH] Gallery-priority: using', strictGallery.length,
+      'packshot URLs (/gallery/medium or gscs-b2c goldimage)');
+    pool = strictGallery;
+  } else {
+    // No confirmed gallery packshots — fall back to slug/model matching
+    // to at least exclude other-product cross-promo images.
     const segs  = slug.replace(/^lg-/, '').split('-');
     const model = segs.find(s => s.length >= 5 && /[a-z]/i.test(s) && /\d/.test(s)) || '';
 
@@ -461,10 +491,7 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
       console.log('[DASH] Model-filter: using', byModel.length, 'model-matched images');
       pool = byModel;
     } else if (byModel.length === 1) {
-      console.log('[DASH] Model-filter: only 1 match — using model + full pool (model-first)');
       pool = [...byModel, ...pool.filter(u => !byModel.includes(u))];
-    } else {
-      console.log('[DASH] Slug/model filter: no matches — using full pool');
     }
   }
 
@@ -801,6 +828,12 @@ function isSpecImage(url) {
   if (/[_-]1280x720[_.-]|[_-]800x450[_.-]|[_-]960x540[_.-]|[_-]1920x1080[_.-]/i.test(u)) return true;
   // LG-specific "area thumbnail" / UI feature image naming
   if (/_at_\d|[-_]ui[-_]|[-_]scene\d|[-_]banner\d/i.test(u)) return true;
+  // LG USP/feature image naming conventions (NOT from /gallery/ path)
+  // e.g. 01_AIDD_W4X7016TBB.jpg, 02_TurboWash360.jpg, usp-steam.jpg, kv_hero.jpg
+  if (/[-_](aidd|turbowash|steamgo|wideband|directdrive|inverter|energysaving|smartcontrol)/i.test(u)) return true;
+  if (/^(?:0[1-9]|[1-9]\d)_[a-z]/i.test(u.split('/').pop())) return true;  // "01_Feature.jpg" naming
+  if (/\/kv[-_]|[-_]kv\d|\/hero[-_]|[-_]hero\./i.test(u)) return true;    // key visual / hero image
+  if (/usp[-_]|[-_]usp\d|feature[-_]img|featureimage/i.test(u)) return true;
   return false;
 }
 
