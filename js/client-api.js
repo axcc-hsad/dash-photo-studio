@@ -123,13 +123,15 @@ async function jinaFetch(url) {
       title   = d.title || '';
       markdown = d.content || d.text || '';
       // images field: object {url: alt} OR array
+      // ⚠️  Only keep LG CDN images — Jina returns ALL images on the page including
+      // ThinQ app icons, Apple/Google store badges, partner logos, etc.
+      // Restricting to LG CDN domains here prevents icon images from entering the pool.
       const imgField = d.images;
       if (imgField) {
-        if (Array.isArray(imgField)) {
-          images = imgField.map(i => (typeof i === 'string' ? i : i.url)).filter(Boolean);
-        } else if (typeof imgField === 'object') {
-          images = Object.keys(imgField);
-        }
+        const raw = Array.isArray(imgField)
+          ? imgField.map(i => (typeof i === 'string' ? i : i.url)).filter(Boolean)
+          : Object.keys(imgField);
+        images = raw.filter(u => /(?:gscs-b2c\.lge\.com|lg\.com\/content\/dam)/i.test(u));
       }
     } catch {}
   } else {
@@ -530,12 +532,15 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
     console.log('[DASH] CDN-first mode: using', cdnImgs.size, 'gallery images exclusively');
   }
 
-  // 1. Hard-filter obvious bad images by URL pattern
+  // 1. Hard-filter — LG CDN domain ONLY, then pattern-based rejects
+  //    LG product packshots are always served from:
+  //      • www.lg.com/content/dam/  (AEM CDN)
+  //      • gscs-b2c.lge.com/lglib/goldimage/  (goldimage CDN)
+  //    Any other domain (Apple CDN, Google Play, partner logos, etc.) is not a packshot.
   let pool = [...source]
     .filter(imgUrl)
+    .filter(u => /(?:gscs-b2c\.lge\.com|lg\.com\/content\/dam)/i.test(u))  // LG CDN only
     .filter(u => !isSpecImage(u))
-    .filter(u => !/\d{1,2}x\d{1,2}(?!\d)/.test(u))
-    .filter(u => !/[_-]\d{2,3}x\d{2,3}[_.-]/i.test(u))
     .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u));
 
   // 1b. Product-type exclusion: filter out images whose URL clearly signals a different
@@ -954,31 +959,51 @@ function deduplicateBySlot(urls) {
   return numbered;
 }
 
-// URL-based filter: reject spec drawings, videos, campaign/people images
+// URL-based filter: reject spec drawings, videos, badges, campaign images
+// Called BEFORE vision scoring — catches obvious non-packshots by URL pattern alone.
 function isSpecImage(url) {
   const u = url.toLowerCase();
-  // Dimension drawings
+  const fname = u.split('/').pop().split('?')[0];
+
+  // ── Dimension / installation drawings ────────────────────────────
   if (/dimension|install(?:ation)?|spec[_-]|schematic|diagram|drawing|manual|technical|measure/i.test(u)) return true;
   if (/\/[Dd]\d+\.[a-z]{2,4}/i.test(url)) return true;
-  if (/_[Dd]\d+\.[a-z]{2,4}$/i.test(url.split('/').pop())) return true;
-  // Video files or video CDNs (play button is CSS overlay — not in image file — but URL reveals source)
+  if (/^[Dd]\d+\.[a-z]{2,4}$/i.test(fname)) return true;
+
+  // ── Video sources ─────────────────────────────────────────────────
   if (/youtube\.com|ytimg\.com|vimeo\.com|wistia\.com|brightcove\.net|\.mp4|\.webm|\.mov/i.test(u)) return true;
-  // LG campaign / feature / highlight / banner sections
+  if (/video[-_]thumb|vid[-_]poster|videoimg|video-image|vid-img/i.test(u)) return true;
+
+  // ── LG CDN path sections that never contain packshots ────────────
   if (/\/feature[s]?\/|\/highlight[s]?\/|\/campaign[s]?\/|\/hero-video\//i.test(u)) return true;
   if (/\/banner\/|\/promo\/|\/landing\/|\/teaser\//i.test(u)) return true;
-  // Video thumbnails by naming convention
-  if (/video[-_]thumb|vid[-_]poster|videoimg|video-image|vid-img/i.test(u)) return true;
-  // LG feature/UI showcase images: typically 16:9 crops (1280x720, 800x450, 960x540)
-  // These appear as video-like thumbnail overlays on product pages
+  if (/\/icon[s]?\/|\/badge[s]?\/|\/award[s]?\/|\/certif/i.test(u)) return true;
+  if (/\/energy[-_]|\/rating[-_]|\/label[-_]/i.test(u)) return true;   // energy-label graphics
+
+  // ── Fixed pixel-size crops used for video/UI overlays ────────────
   if (/[_-]1280x720[_.-]|[_-]800x450[_.-]|[_-]960x540[_.-]|[_-]1920x1080[_.-]/i.test(u)) return true;
-  // LG-specific "area thumbnail" / UI feature image naming
+
+  // ── LG AEM area-thumbnail / UI naming ────────────────────────────
   if (/_at_\d|[-_]ui[-_]|[-_]scene\d|[-_]banner\d/i.test(u)) return true;
-  // LG USP/feature image naming conventions (NOT from /gallery/ path)
-  // e.g. 01_AIDD_W4X7016TBB.jpg, 02_TurboWash360.jpg, usp-steam.jpg, kv_hero.jpg
+
+  // ── Filename-based USP/feature patterns ──────────────────────────
+  // e.g. 01_AIDD_W4X7016TBB.jpg, usp-steam.jpg, kv_hero.jpg
   if (/[-_](aidd|turbowash|steamgo|wideband|directdrive|inverter|energysaving|smartcontrol)/i.test(u)) return true;
-  if (/^(?:0[1-9]|[1-9]\d)_[a-z]/i.test(u.split('/').pop())) return true;  // "01_Feature.jpg" naming
-  if (/\/kv[-_]|[-_]kv\d|\/hero[-_]|[-_]hero\./i.test(u)) return true;    // key visual / hero image
+  if (/^(?:0[1-9]|[1-9]\d)_[a-z]/i.test(fname)) return true;   // "01_Feature.jpg"
+  if (/\/kv[-_]|[-_]kv\d|\/hero[-_]|[-_]hero\./i.test(u)) return true;
   if (/usp[-_]|[-_]usp\d|feature[-_]img|featureimage/i.test(u)) return true;
+
+  // ── Warranty / guarantee / award badge images ─────────────────────
+  // LG galleries sometimes include guarantee badges (e.g. "5YearGuarantee.jpg")
+  if (/warrant|guarant|certif|award|trophy|prize/i.test(fname)) return true;
+  if (/[_-](\d+)year[_-]?(?:parts?|labour|guarantee|warranty)/i.test(fname)) return true;
+  if (/5yr|10yr|\d+yr[-_]/i.test(fname)) return true;
+
+  // ── d2c-content "add-N" spec images (dimensions, installation) ────
+  // /d2c-content/.../gallery/.../lg-laundry-MODEL-add-4-450.jpg (add-4=dimensions, add-5=install)
+  // add-1 (rear), add-2 (panel), add-3 (feature), add-6 (in-situ) may be ok → kept
+  if (/[-_]add[-_](?:4|5)\b/i.test(fname)) return true;   // add-4 = dimensions, add-5 = installation
+
   return false;
 }
 
