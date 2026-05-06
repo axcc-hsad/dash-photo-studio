@@ -38,10 +38,11 @@ async function clientScrape(url) {
   let   feat = [];
 
   // ── Run all parallel sources ──────────────────────────────────
-  const [jinaR, cdnR, gemR] = await Promise.allSettled([
+  const [jinaR, cdnR, gemR, htmlGalR] = await Promise.allSettled([
     jinaFetch(url),                     // A. Jina renders the page
     cdnProbe(info, imgs, cdnImgs),      // B. CDN pattern probing (fills both sets)
     geminiAnalyze(url, info),           // C. Gemini reads page + web search
+    extractGalleryUrls(url, info),      // D. CORS proxy + __NEXT_DATA__ gallery extraction
   ]);
 
   // ── Merge: Jina — text info only if CDN images found; images always added ──
@@ -65,6 +66,14 @@ async function clientScrape(url) {
     console.log('[DASH] Gemini: ok, type =', g.productType);
   } else {
     console.warn('[DASH] Gemini failed:', gemR.reason?.message);
+  }
+
+  // ── Merge: HTML gallery extraction (goes directly into cdnImgs — guaranteed packshots) ──
+  if (htmlGalR.status === 'fulfilled' && htmlGalR.value.length > 0) {
+    htmlGalR.value.forEach(u => { imgs.add(u); cdnImgs.add(u); });
+    console.log('[DASH] HTML gallery:', htmlGalR.value.length, 'packshots added to CDN set');
+  } else {
+    console.warn('[DASH] HTML gallery failed or empty:', htmlGalR.reason?.message || 'no gallery URLs found');
   }
 
   // CDN-probed images are already in imgs too; log both counts
@@ -209,11 +218,12 @@ async function cdnProbe(info, imgSet, cdnSet = new Set()) {
   // _AU = Australia, _CA = Canada, _US = USA
   const mkSufx = ['_AEK', '_AEKQ', '_AEK2', '_EEK', '_EEK2', '_MEA', '_AU', '_CA', '_US', ''];
 
-  // ── LG content/dam gallery: probe BOTH full categoryPath AND single category ──
-  // Full path (e.g. "tv-barres-de-son/qned") hits the correct nested CDN structure.
-  // Single category is kept as fallback for simpler URL structures (/uk/tvs/lg-oled55c54la/).
-  // ── LG content/dam gallery: probe full categoryPath + single category ──────
-  const catPaths = [...new Set([cdnCat, category].filter(Boolean))];
+  // ── LG content/dam gallery: probe full categoryPath + last segment + single category ──
+  // e.g. /uk/laundry/washtowers/wt1210bbtn1/ → tries:
+  //   "laundry/washtowers", "washtowers", "laundry"
+  // The last segment alone ("washtowers") is often the actual CDN directory name.
+  const lastCat = categoryPath.includes('/') ? categoryPath.split('/').pop() : null;
+  const catPaths = [...new Set([cdnCat, lastCat, category].filter(Boolean))];
   for (const cp of catPaths) {
     for (let n = 1; n <= 8; n++) {      // Extended to 8 — some LG products have 6–8 gallery images
       const pad = String(n).padStart(2, '0');
@@ -259,6 +269,58 @@ async function cdnProbe(info, imgSet, cdnSet = new Set()) {
 // module-level probe still used by parseHtml's gallery-sibling expansion
 function probe(url, set) {
   return imgExists(url).then(ok => { if (ok) set.add(url); });
+}
+
+// ══ B2. HTML GALLERY EXTRACTOR ════════════════════════════════════
+// Fetches raw page HTML via CORS proxy and extracts gallery image URLs
+// from __NEXT_DATA__ JSON (embedded in static HTML by Next.js SSR).
+// This catches lazy-loaded gallery images that Jina misses — because
+// __NEXT_DATA__ is part of the initial HTML payload, not triggered by scroll.
+async function extractGalleryUrls(url, info) {
+  const found = new Set();
+  try {
+    const html = await proxyFetch(url);
+
+    // 1. __NEXT_DATA__ — Next.js SSR JSON blob (contains ALL product images)
+    const nx = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (nx) { try { walkImgs(JSON.parse(nx[1]), found); } catch {} }
+
+    // 2. JSON-LD structured data
+    for (const m of html.matchAll(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi)) {
+      try { walkImgs(JSON.parse(m[1]), found); } catch {}
+    }
+
+    // 3. Bare CDN URLs in raw HTML text
+    const cdnRe = /https?:\/\/(?:gscs-b2c\.lge\.com|[^"'\s]*?lg\.com\/content\/dam)[^"'\s,)>]+\.(?:jpg|jpeg|png|webp)(?:[^"'\s,)>]*)?/gi;
+    for (const m of html.matchAll(cdnRe)) found.add(m[0].split('\\u')[0].replace(/[\\'"]+$/, ''));
+
+  } catch (e) {
+    console.warn('[DASH] extractGalleryUrls: HTML fetch failed —', e.message);
+    return [];
+  }
+
+  // Keep only confirmed gallery-packshot URL patterns
+  const galleryUrls = [...found].filter(imgUrl).filter(u =>
+    /\/gallery\/medium\d+\./i.test(u) ||
+    /gscs-b2c\.lge\.com\/lglib\/goldimage\//i.test(u)
+  );
+
+  // If we found the base (medium01), probe siblings 2–8
+  const baseUrl = galleryUrls.find(u => /medium0?1\.[a-z]{2,4}$/i.test(u.split('?')[0]));
+  if (baseUrl) {
+    const baseNoQ = baseUrl.split('?')[0];
+    const extM = baseNoQ.match(/\.[a-z]{2,4}$/i);
+    const ext  = extM ? extM[0] : '.jpg';
+    const sibProbes = [2,3,4,5,6,7,8].map(n => {
+      const sibling = baseNoQ.replace(/medium0?1(\.[a-z]{2,4})$/i, `medium${String(n).padStart(2,'0')}${ext}`);
+      return imgExists(sibling).then(ok => { if (ok) galleryUrls.push(sibling); });
+    });
+    await Promise.all(sibProbes);
+  }
+
+  const unique = [...new Set(galleryUrls)].filter(imgUrl);
+  if (unique.length) console.log('[DASH] extractGalleryUrls: found', unique.length, 'gallery packshots from HTML');
+  return unique;
 }
 
 // ══ C. GEMINI ANALYSIS ════════════════════════════════════════════
@@ -356,7 +418,7 @@ function normalizeType(t) {
   if (!t) return null;
   const s = String(t).toLowerCase();
   if (/fridge|refrig|freezer/.test(s))       return 'fridge';
-  if (/wash|dryer/.test(s))                  return 'washer';
+  if (/wash|dryer|washtower/.test(s))         return 'washer';
   if (/monitor|ultrawide|curved.?screen/.test(s)) return 'monitor';
   if (/tv|oled|qned|display|soundbar/.test(s)) return 'tv';
   return 'appliance';
@@ -875,7 +937,7 @@ function parseUrl(url) {
     const uLow = url.toLowerCase();
     const productType =
       /refrigerat|fridge|freezer|lrmv|lfxs|gsxv|gsx|instaview/.test(uLow) ? 'fridge'   :
-      /washer|dryer|wm\d|dlex|dlgx/.test(uLow)                             ? 'washer'   :
+      /washer|dryer|wm\d|dlex|dlgx|washtower|wash-tower/.test(uLow)        ? 'washer'   :
       /monitor|ultrawide|34w|27u|32u/.test(uLow)                           ? 'monitor'  :
       /oled|qned|nano|tv|65u|55u|75u|c3|c4|c5|g3|g4|g5/.test(uLow)       ? 'tv'       : 'appliance';
 
