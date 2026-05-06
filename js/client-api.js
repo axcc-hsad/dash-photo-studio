@@ -324,13 +324,18 @@ async function extractGalleryUrls(url, info) {
     return [];
   }
 
-  // Keep only confirmed gallery-packshot URL patterns
-  // Covers both: classic medium01.jpg naming AND AEM descriptive naming (/images/{cat}/{slug}/gallery/)
-  const galleryUrls = [...found].filter(imgUrl).filter(u =>
-    /\/gallery\/medium\d+\./i.test(u) ||
-    /\/content\/dam\/channel\/wcms\/[^/]+\/images\/.+\/gallery\//i.test(u) ||
-    /gscs-b2c\.lge\.com\/lglib\/goldimage\//i.test(u)
-  );
+  // Keep only confirmed gallery-packshot URL patterns,
+  // AND require the product slug in the URL to exclude related-product images.
+  const slugCoreH = (info.slug || '').toLowerCase().replace(/^lg-/, '');
+  const galleryUrls = [...found].filter(imgUrl).filter(u => {
+    const ul = u.toLowerCase();
+    if (/\/gallery\/medium\d+\./i.test(u)) return !slugCoreH || ul.includes(slugCoreH);
+    if (/\/content\/dam\/channel\/wcms\/[^/]+\/images\/.+\/gallery\//i.test(u))
+      return slugCoreH && ul.includes(slugCoreH);
+    if (/gscs-b2c\.lge\.com\/lglib\/goldimage\//i.test(u))
+      return !slugCoreH || ul.includes(slugCoreH);
+    return false;
+  });
 
   // If we found the base (medium01), probe siblings 2–8
   const baseUrl = galleryUrls.find(u => /medium0?1\.[a-z]{2,4}$/i.test(u.split('?')[0]));
@@ -567,11 +572,28 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
   //     so matching either pattern is a reliable packshot signal.
   //     gscs-b2c goldimage CDN (*_AEK_N.jpg) is also guaranteed packshot.
   //
-  const galleryMediumUrls = pool.filter(u =>
-    /\/gallery\/medium\d+\./i.test(u) ||                                   // classic medium01.jpg
-    /\/content\/dam\/channel\/wcms\/[^/]+\/images\/.+\/gallery\//i.test(u) // AEM descriptive naming
-  );
-  const goldimageUrls = pool.filter(u => /gscs-b2c\.lge\.com.+_\d+\.jpg/i.test(u));
+  // slugCore: strip "lg-" prefix so both "lg-wt1210wwf" and "wt1210wwf" match the CDN path
+  const slugCore = slug.toLowerCase().replace(/^lg-/, '');
+
+  const galleryMediumUrls = pool.filter(u => {
+    const ul = u.toLowerCase();
+    // Classic medium01.jpg naming — slug is already in the CDN path, no extra check needed
+    if (/\/gallery\/medium\d+\./i.test(u)) return true;
+    // AEM descriptive naming: must ALSO contain the product slug to prevent
+    // related-product images (from "You may also like" sections) slipping through.
+    // e.g. /images/washtower/wt1210wwf/gallery/...  ← contains slug ✓
+    //      /images/washing-machines/f4wv912p2se/gallery/... ← does NOT contain wt1210wwf ✗
+    if (/\/content\/dam\/channel\/wcms\/[^/]+\/images\/.+\/gallery\//i.test(u)) {
+      return slugCore && ul.includes(slugCore);
+    }
+    return false;
+  });
+  const goldimageUrls = pool.filter(u => {
+    const ul = u.toLowerCase();
+    if (!/gscs-b2c\.lge\.com.+_\d+\.jpg/i.test(u)) return false;
+    // Also slug-match goldimage URLs to avoid wrong-product packshots
+    return !slugCore || ul.includes(slugCore);
+  });
   const strictGallery = [...new Set([...galleryMediumUrls, ...goldimageUrls])];
 
   if (strictGallery.length >= 1) {
