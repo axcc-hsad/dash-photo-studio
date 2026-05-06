@@ -146,9 +146,9 @@ async function jinaFetch(url) {
   const mdImgRe = /!\[[^\]]*\]\((https?:\/\/[^)\s]+\.(?:jpg|jpeg|png|webp)[^)\s]*)\)/gi;
   for (const m of markdown.matchAll(mdImgRe)) images.push(m[1]);
 
-  // And bare LG CDN URLs in the text
-  const cdnRe = /(https?:\/\/(?:gscs-b2c\.lge\.com|[^\s]*lg\.com\/content\/dam)[^\s,)"'>]+\.(?:jpg|jpeg|png|webp)[^\s,)"'>]*)/gi;
-  for (const m of markdown.matchAll(cdnRe)) images.push(m[1]);
+  // And bare LG CDN URLs in the text — covers both content/dam and gscs-b2c goldimage CDN
+  const cdnRe = /(https?:\/\/(?:gscs-b2c\.lge\.com|[^\s]*lg\.com\/content\/dam)[^\s,)"'\\]+\.(?:jpg|jpeg|png|webp)[^\s,)"'\\]*)/gi;
+  for (const m of markdown.matchAll(cdnRe)) images.push(m[1].replace(/[\\'"]+$/, ''));
 
   // Extract features from markdown — skip cookie banners, nav menus, category lists
   const JUNK = /cookie|privacy|consent|analytics|adverti|functional|necessary|social.?media|navigation|business|heating|cooling|computing|accessories|audio|video|open.?menu|sign.?in|log.?in|register|basket|cart|wishlist/i;
@@ -166,6 +166,31 @@ async function jinaFetch(url) {
 
   // Clean title: remove "| LG XX" market suffix
   const cleanTitle = (title || '').replace(/\s*[\|–-]\s*LG\s+\w+\s*$/i, '').trim();
+
+  // For AEM-style gallery URLs found in Jina, also probe higher-resolution variants.
+  // LG AEM CDN serves the same image in multiple size folders:
+  //   /gallery/450x450/Name.jpg  →  try /gallery/1600x1062/Name.jpg  (highest quality)
+  //   /gallery/350x350/Name.jpg  →  try /gallery/1100x730/Name.jpg
+  // Probing is done via Image() (no CORS restriction).
+  const aemGallery = [...new Set(images)].filter(u =>
+    /\/content\/dam\/channel\/wcms\/.+\/gallery\/\d+x\d+\//i.test(u)
+  );
+  if (aemGallery.length > 0) {
+    const hiResSizes = ['1600x1062', '1100x730', '2010x1334'];
+    const hiResProbes = [];
+    for (const u of aemGallery) {
+      for (const sz of hiResSizes) {
+        const hiRes = u.replace(/\/gallery\/\d+x\d+\//i, `/gallery/${sz}/`);
+        if (!images.includes(hiRes)) {
+          hiResProbes.push(
+            imgExists(hiRes).then(ok => { if (ok) images.push(hiRes); })
+          );
+        }
+      }
+    }
+    await Promise.all(hiResProbes);
+    console.log('[DASH] Jina AEM gallery: probed hi-res variants,', images.length, 'total');
+  }
 
   return {
     title:    cleanTitle,
@@ -300,8 +325,10 @@ async function extractGalleryUrls(url, info) {
   }
 
   // Keep only confirmed gallery-packshot URL patterns
+  // Covers both: classic medium01.jpg naming AND AEM descriptive naming (/images/{cat}/{slug}/gallery/)
   const galleryUrls = [...found].filter(imgUrl).filter(u =>
     /\/gallery\/medium\d+\./i.test(u) ||
+    /\/content\/dam\/channel\/wcms\/[^/]+\/images\/.+\/gallery\//i.test(u) ||
     /gscs-b2c\.lge\.com\/lglib\/goldimage\//i.test(u)
   );
 
@@ -526,17 +553,34 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
   }
 
   // 1c. Gallery-path priority filter (STRONGEST signal of a packshot)
-  //     LG stores all gallery packshots under /gallery/medium*.jpg on content/dam,
-  //     and as *_AEK_1.jpg etc. on gscs-b2c goldimage CDN.
-  //     USP/feature images are NEVER at these specific paths → use them exclusively.
-  const galleryMediumUrls = pool.filter(u => /\/gallery\/medium\d+\./i.test(u));
-  const goldimageUrls     = pool.filter(u => /gscs-b2c\.lge\.com.+_\d+\.jpg/i.test(u));
-  const strictGallery     = [...new Set([...galleryMediumUrls, ...goldimageUrls])];
+  //
+  //     LG uses TWO different CDN naming conventions depending on market/product:
+  //
+  //     A) classic "medium" naming: /gallery/medium01.jpg, medium02.jpg ...
+  //        e.g. French QNED: .../images/tv-barres-de-son/qned/{slug}/gallery/medium01.jpg
+  //
+  //     B) AEM descriptive naming (UK/EU newer products):
+  //        .../images/{category}/{slug}/gallery/{SIZE}/{DescriptiveName}.jpg
+  //        e.g. UK WashTower: .../images/washtower/wt1210bbtn1/gallery/1600x1062/WashTower24_..._Front.jpg
+  //
+  //     USP/feature images never live under /images/{cat}/{slug}/gallery/ or medium* paths,
+  //     so matching either pattern is a reliable packshot signal.
+  //     gscs-b2c goldimage CDN (*_AEK_N.jpg) is also guaranteed packshot.
+  //
+  const galleryMediumUrls = pool.filter(u =>
+    /\/gallery\/medium\d+\./i.test(u) ||                                   // classic medium01.jpg
+    /\/content\/dam\/channel\/wcms\/[^/]+\/images\/.+\/gallery\//i.test(u) // AEM descriptive naming
+  );
+  const goldimageUrls = pool.filter(u => /gscs-b2c\.lge\.com.+_\d+\.jpg/i.test(u));
+  const strictGallery = [...new Set([...galleryMediumUrls, ...goldimageUrls])];
 
   if (strictGallery.length >= 1) {
     console.log('[DASH] Gallery-priority: using', strictGallery.length,
-      'packshot URLs (/gallery/medium or gscs-b2c goldimage)');
-    pool = strictGallery;
+      'packshot URLs (medium*/AEM gallery path or gscs-b2c goldimage)');
+    // When multiple sizes of the same image exist (e.g. /450x450/ and /1600x1062/),
+    // keep the highest-resolution version of each unique image.
+    pool = deduplicateByFilename(strictGallery);
+    console.log('[DASH] After filename-dedup:', pool.length, 'unique gallery images');
   } else {
     // No confirmed gallery packshots — fall back to slug/model matching
     // to at least exclude other-product cross-promo images.
@@ -830,6 +874,21 @@ async function _visionByBase64(candidates, productType, key) {
   return result;
 }
 
+// Deduplicate by filename: same image served at multiple resolutions (450x450, 1600x1062 etc.)
+// → keep only the highest-scored (highest-res) URL per unique filename.
+// This prevents wasting gallery slots on size-duplicates of the same photo.
+function deduplicateByFilename(urls) {
+  const byName = new Map();
+  for (const u of urls) {
+    const name = u.split('/').pop().split('?')[0].toLowerCase();
+    const existing = byName.get(name);
+    if (!existing || lgScore(u) > lgScore(existing)) {
+      byName.set(name, u);
+    }
+  }
+  return [...byName.values()];
+}
+
 // Extract a "slot number" from a URL (1 = first product shot, 99 = unknown/non-gallery)
 // LG CDN convention: medium01 / _AEK_1 / _1 → slot 1; D01 → dimension (99)
 function slotIndex(url) {
@@ -861,11 +920,13 @@ function deduplicateBySlot(urls) {
     .map(([, url]) => url)
     .slice(0, 5);  // max 5 images
 
-  // Safety fallback: if no images had standard numeric slots (non-standard CDN naming),
-  // use score-sorted original pool so we never return an empty list.
+  // Safety fallback: if no images had standard numeric slots (AEM descriptive naming, etc.),
+  // deduplicate by filename first (to avoid same image in 3 different sizes taking all 5 slots),
+  // then score-sort and take top 5.
   if (numbered.length === 0 && urls.length > 0) {
-    console.log('[DASH] dedup: no numbered slots — using score-sorted fallback for', urls.length, 'images');
-    return [...urls].sort((a, b) => lgScore(b) - lgScore(a)).slice(0, 5);
+    console.log('[DASH] dedup: no numbered slots — filename-dedup + score-sort for', urls.length, 'images');
+    const byFile = deduplicateByFilename(urls);
+    return byFile.sort((a, b) => lgScore(b) - lgScore(a)).slice(0, 5);
   }
 
   return numbered;
