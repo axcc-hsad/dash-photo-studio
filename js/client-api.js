@@ -555,85 +555,121 @@ async function visionScoreImages(candidates, productType, pageUrl = '') {
   }
 }
 
-// ── NEW PRIMARY: Load the LG PRODUCT PAGE, visually evaluate gallery images ──
-// LG pages are accessible to Google crawlers (urlContext). Gemini sees the gallery
-// images visually on the page and scores each URL we provide.
-// This avoids needing to proxy individual LG CDN image files.
-async function _visionByPageUrl(pageUrl, candidates, productType, key) {
-  const urlList = candidates.map((c, i) => `Image ${i + 1}: ${c.url}`).join('\n');
+// ── Shared: build the vision scoring prompt (all product types) ───────────────
+function _visionPrompt(productType, urlList, context = '') {
+  const typeGuide = {
+    tv: [
+      'TV frame/bezel/stand clearly visible = score 2–3 even with demo content on screen',
+      'ONLY screen content with no visible frame/bezel = score 0',
+      'Large text/logo overlay ("LG QNED evo AI / 2025") covering most of image = score 0',
+    ],
+    washer: [
+      'Front-facing or 3/4 packshot on white/light gray background = score 3',
+      'Open drum detail or side profile on white background = score 2',
+      'Washer in a kitchen/laundry room lifestyle scene WITH PEOPLE = score 0',
+      'Internal drum close-up (no product outline) = score 1',
+    ],
+    fridge: [
+      'Front door closed on white/neutral background = score 3',
+      'Door open showing interior contents, on white background = score 2',
+      'Fridge in a kitchen lifestyle scene WITH PEOPLE = score 0',
+      'Close-up of handle or shelves only (no product silhouette) = score 1',
+    ],
+    monitor: [
+      'Front-facing on white/dark/neutral background = score 3',
+      'Side profile or 3/4 angle on plain background = score 2',
+      'Monitor in a desk/workspace lifestyle scene WITH PEOPLE = score 0',
+    ],
+    appliance: [
+      'Product clearly visible as the main subject on plain background = score 2–3',
+      'Product in a lifestyle room scene WITH PEOPLE = score 0',
+    ],
+  };
 
-  const body = {
-    contents: [{
-      parts: [{ text: `Access this LG product page:
-${pageUrl}
+  const guide = (typeGuide[productType] || typeGuide.appliance)
+    .map(l => `  • ${l}`).join('\n');
 
-Look at the product gallery images on the page. Then score each image URL below based on what it shows (0–3):
+  return `You are an LG product image quality evaluator for lifestyle image compositing.
+${context}
+Score each image URL below on a 0–3 scale:
 
 ${urlList}
 
-Scoring rules:
-3 = Ideal packshot: LG ${productType} clearly visible, front-facing or slight angle, white/plain/studio background, no people, minimal text
-2 = Acceptable: product clearly visible with slight angle or non-white background
-1 = Poor: back view, extreme side profile (product very thin), product small in frame, or heavily cropped detail
-0 = REJECT: marketing/campaign banner with large text overlay covering most of image; lifestyle scene with people in a room; wrong product type (e.g. washer on a TV page); abstract color art or texture with no product; near-empty background with no product
+── Scoring rules ──────────────────────────────────────────────────────────────
+3 = IDEAL packshot: product clearly visible, front-facing or ¾ angle,
+    WHITE or plain studio/neutral background, no people, no significant text overlay
+2 = ACCEPTABLE: product clearly visible, non-white but neutral/gray background,
+    slight angle, or minor text that doesn't dominate
+1 = POOR: back view, extreme side profile (product very thin), product very small
+    in frame, single-detail crop (handle, button, drum) without full product silhouette
+0 = REJECT — score 0 for ANY of these:
+    • Lifestyle scene with PEOPLE visible in a room
+    • Dimension/installation diagram or specification chart
+    • Wrong product type (e.g. a refrigerator image on a washer page)
+    • Video thumbnail (movie, game, or YouTube-style scene full-screen)
+    • Marketing/campaign banner where large text covers more than half the image
+    • Abstract color art or texture swatch with no product present
+    • Near-empty image (blank background, no product visible)
+    • USP feature graphic: partial product buried in text/icon overlays
 
-${productType === 'tv' ? 'For TV: a TV displaying demo content/abstract art on screen is OK (score 2-3) IF the TV frame/bezel/stand are clearly visible. Large text overlay like "LG QNED evo AI 2025" covering the whole image = score 0.' : ''}
+── ${productType.toUpperCase()} specific rules ──────────────────────────────────────────
+${guide}
 
-Return ONLY a JSON array, no markdown, no explanation:
-[{"i":1,"score":3},{"i":2,"score":0},...]` }],
-    }],
-    tools: [{ urlContext: {} }],
-  };
+Return ONLY a JSON array — no markdown, no explanation:
+[{"i":1,"score":3},{"i":2,"score":0},...] — one entry per image.`;
+}
+
+// ── Shared: apply scores and filter; safety net prevents empty result ─────────
+function _applyVisionScores(candidates, scores, logLabel) {
+  const scoreMap = new Map(scores.map(s => [s.i - 1, s.score]));
+  const scored   = candidates.map((c, i) => ({ ...c, vScore: scoreMap.get(i) ?? 1 }));
+  console.log(`[DASH] ${logLabel}:`, scored.map(s => `${s.url.split('/').pop()}→${s.vScore}`).join(', '));
+
+  const passed = scored.filter(c => c.vScore > 0).sort((a, b) => b.vScore - a.vScore);
+
+  // Safety net: never return empty — if all scored 0, keep best 1-2 to prevent "No Image"
+  const result = passed.length > 0
+    ? passed
+    : scored.sort((a, b) => b.vScore - a.vScore).slice(0, 2);
+
+  return result.map(({ vScore, ...rest }) => rest);
+}
+
+// ── PRIMARY: Load LG product PAGE, score images from page context ─────────────
+// LG pages are accessible to Google crawlers via urlContext. Gemini visually
+// inspects the gallery and matches scores to the candidate URLs we provide.
+async function _visionByPageUrl(pageUrl, candidates, productType, key) {
+  const urlList = candidates.map((c, i) => `Image ${i + 1}: ${c.url}`).join('\n');
+  const context = `Access this LG product page to see the gallery: ${pageUrl}\nThen score each image URL listed below.`;
+  const prompt  = _visionPrompt(productType, urlList, context);
 
   const res = await fetchT(
     `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ urlContext: {} }] }),
+    },
     35000
   );
   if (!res.ok) throw new Error(`pageUrl vision API ${res.status}`);
 
-  const data = await res.json();
+  const data  = await res.json();
   if (data.error) throw new Error(data.error.message);
 
-  const text = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '';
+  const text  = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || '';
   const match = text.match(/\[[\s\S]+\]/);
   if (!match) throw new Error('No JSON array in pageUrl vision response');
 
-  const scores   = JSON.parse(match[0]);
-  const scoreMap = new Map(scores.map(s => [s.i - 1, s.score]));
-
-  const scored = candidates.map((c, i) => ({ ...c, vScore: scoreMap.get(i) ?? 1 }));
-  console.log('[DASH] pageUrl vision scores:', scored.map(s => `${s.url.split('/').pop()}→${s.vScore}`).join(', '));
-
-  return scored
-    .filter(c => c.vScore > 0)
-    .sort((a, b) => b.vScore - a.vScore)
-    .map(({ vScore, ...rest }) => rest);
+  return _applyVisionScores(candidates, JSON.parse(match[0]), 'pageUrl vision');
 }
 
-// Secondary path: pass image URLs directly; Gemini's urlContext loads them server-side
+// ── SECONDARY: Individual image URLs via urlContext ───────────────────────────
 async function _visionByUrlContext(candidates, productType, key) {
   const urlList = candidates.map((c, i) => `Image ${i + 1}: ${c.url}`).join('\n');
+  const prompt  = _visionPrompt(productType, urlList);
 
   const body = {
-    contents: [{
-      parts: [{ text: `You are an LG product image quality evaluator.
-Please access each image URL below and score it for use as a product packshot in lifestyle image compositing.
-
-${urlList}
-
-Scoring rules (score each image 0–3):
-3 = Ideal packshot: LG ${productType} clearly visible, front-facing, white or plain neutral/gradient background, no people, minimal or no text overlay
-2 = Acceptable: product clearly visible, slight angle (e.g. 3/4 view) or gray/studio-colored background
-1 = Poor: back view only, extreme side-profile (product very thin), heavily cropped to just a detail, product very small in frame
-0 = REJECT: ANY of the following — lifestyle scene with people in a room; dimension/spec diagram; wrong product type (e.g. washer/dryer on a TV page); extreme close-up crop with no recognisable product outline; video thumbnail (movie/game scene shown full-screen); marketing banner with large text overlay covering most of the image; abstract color art with no product visible; partial crop showing only fabric/texture/background
-
-For ${productType} specifically:
-${productType === 'tv' ? '- A TV with the screen showing abstract art or demo content is OK (score 2-3) as long as the TV frame/stand are clearly visible\n- Score 0 if it is ONLY the screen content with no TV frame/bezel visible\n- A marketing overlay ("LG QNED evo AI / 2025") covering most of the image scores 0' : '- Product must be the clear subject of the image'}
-
-Return ONLY a JSON array (no explanation):
-[{"i":1,"score":3},{"i":2,"score":0},...] — one object per image.` }],
-    }],
+    contents: [{ parts: [{ text: prompt }] }],
     tools: [{ urlContext: {} }],
   };
 
@@ -651,18 +687,7 @@ Return ONLY a JSON array (no explanation):
   const match = text.match(/\[[\s\S]+\]/);
   if (!match) throw new Error('No JSON array in urlContext response');
 
-  const scores   = JSON.parse(match[0]);
-  const scoreMap = new Map(scores.map(s => [s.i - 1, s.score]));   // 0-indexed
-
-  // Default to 1 (poor) if Gemini didn't score an image — prevents unscored images
-  // from being treated as acceptable (score 2) and slipping through
-  const scored = candidates.map((c, i) => ({ ...c, vScore: scoreMap.get(i) ?? 1 }));
-  console.log('[DASH] urlContext vision scores:', scored.map(s=>`${s.url.split('/').pop()}→${s.vScore}`).join(', '));
-
-  return scored
-    .filter(c => c.vScore > 0)
-    .sort((a, b) => b.vScore - a.vScore)
-    .map(({ vScore, ...rest }) => rest);
+  return _applyVisionScores(candidates, JSON.parse(match[0]), 'urlContext vision');
 }
 
 // Fallback path: fetch each image as base64 via CORS proxy, send inline
@@ -684,9 +709,8 @@ async function _visionByBase64(candidates, productType, key) {
     parts.push({ text: `[Image ${i + 1}]` });
     parts.push({ inlineData: { mimeType: img.mime, data: img.b64 } });
   });
-  parts.push({ text: `Score each image 0–3 for use as an LG ${productType} packshot.
-3=ideal front-facing product on white/plain bg, 2=acceptable, 1=poor, 0=REJECT (lifestyle, diagram, wrong product).
-Return ONLY JSON: [{"i":1,"score":3},...] for all ${loaded.length} images.` });
+  // Use the same comprehensive prompt as other paths
+  parts.push({ text: _visionPrompt(productType, loaded.map((img, i) => `Image ${i + 1}: (inline image above)`).join('\n')) });
 
   const res = await fetchT(
     `${GEMINI_BASE}/gemini-2.0-flash:generateContent?key=${key}`,
@@ -700,47 +724,62 @@ Return ONLY JSON: [{"i":1,"score":3},...] for all ${loaded.length} images.` });
   const match = text.match(/\[[\s\S]+\]/);
   if (!match) throw new Error('No JSON in base64 response');
 
-  const scores = JSON.parse(match[0]);
+  const scores        = JSON.parse(match[0]);
   const loadedScoreMap = new Map(scores.map(s => [s.i - 1, s.score]));
 
-  const scored = fetched.map(img => ({
+  // Map scores back to original fetched list (including images that failed to load)
+  const scoredFetched = fetched.map(img => ({
     ...img,
-    vScore: img.ok ? (loadedScoreMap.get(loaded.findIndex(l => l.url === img.url)) ?? 2) : 2,
+    vScore: img.ok ? (loadedScoreMap.get(loaded.findIndex(l => l.url === img.url)) ?? 1) : 0,
   }));
-  console.log('[DASH] base64 vision scores:', scored.map(s=>`${s.url.split('/').pop()}→${s.vScore}`).join(', '));
 
-  return scored
-    .filter(c => c.vScore > 0)
-    .sort((a, b) => b.vScore - a.vScore)
-    .map(({ b64, mime, ok, idx, vScore, ...rest }) => rest);
+  const result = _applyVisionScores(
+    scoredFetched.map(({ b64, mime, ok, idx, ...rest }) => rest),
+    scoredFetched.map((img, i) => ({ i: i + 1, score: img.vScore })),
+    'base64 vision'
+  );
+  return result;
 }
 
-// Extract a "slot number" from a URL (1 = first product shot, 5 = fifth, 99 = unknown/bad)
+// Extract a "slot number" from a URL (1 = first product shot, 99 = unknown/non-gallery)
 // LG CDN convention: medium01 / _AEK_1 / _1 → slot 1; D01 → dimension (99)
 function slotIndex(url) {
   const filename = url.split('/').pop().split('?')[0];
   // D01.jpg, D02.jpg etc. → dimension images, never show
   if (/^[Dd]\d+\./i.test(filename)) return 99;
-  // Extract trailing number before extension: medium03 → 3, GSXV80PZLE_AEK_2.jpg → 2
+  // Extract trailing number before extension: medium03 → 3, F2X50S9TBB_AEK_2.jpg → 2
   const m = filename.match(/(\d+)\.[a-z]{2,4}$/i);
   return m ? parseInt(m[1], 10) : 99;
 }
 
-// Keep best-scored URL per slot; discard slots > 5 and D* images
+// Keep best-scored URL per slot; deduplicate same slot from different CDN sources.
+// Falls back to score-sorted full pool if no standard numbered slots found
+// (prevents "No Image" for products with non-standard CDN filenames).
 function deduplicateBySlot(urls) {
   const slots = new Map(); // slot# → best URL
   for (const url of urls) {
     const slot = slotIndex(url);
-    if (slot > 5 || slot === 99) continue;
+    if (slot === 99) continue;         // dimension / non-gallery
+    if (slot > 10) continue;           // very high slot numbers are usually extra/campaign
     const existing = slots.get(slot);
     if (!existing || lgScore(url) > lgScore(existing)) {
       slots.set(slot, url);
     }
   }
-  // Return in slot order (1, 2, 3, 4, 5) — front view first
-  return [...slots.entries()]
+
+  const numbered = [...slots.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([, url]) => url);
+    .map(([, url]) => url)
+    .slice(0, 5);  // max 5 images
+
+  // Safety fallback: if no images had standard numeric slots (non-standard CDN naming),
+  // use score-sorted original pool so we never return an empty list.
+  if (numbered.length === 0 && urls.length > 0) {
+    console.log('[DASH] dedup: no numbered slots — using score-sorted fallback for', urls.length, 'images');
+    return [...urls].sort((a, b) => lgScore(b) - lgScore(a)).slice(0, 5);
+  }
+
+  return numbered;
 }
 
 // URL-based filter: reject spec drawings, videos, campaign/people images
