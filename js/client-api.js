@@ -1156,12 +1156,14 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
     parts.push({ text: prompt });
   }
 
-  // ── 3. 이미지 생성 요청 (모델 순서대로 시도) ─────────────────
-  // 모델이 404 등으로 실패하면 다음 모델로 자동 전환
+  // ── 3. 이미지 생성 요청 (모델 순서대로 시도, 503 시 1회 재시도) ──
+  // Verified Gemini image-generation model names (as of 2025-Q2).
+  // 503 = server overload (temporary) → wait 8s and retry once before moving on.
+  // 404 = model doesn't exist → skip immediately.
   const IMAGE_MODELS = [
-    'gemini-3.1-flash-image-preview',   // 최신 이미지 생성 모델
-    'gemini-3-pro-image-preview',        // 고품질 이미지
-    'gemini-2.5-flash-image',            // 빠른 이미지 생성
+    'gemini-2.0-flash-preview-image-generation',  // primary: verified working
+    'gemini-2.5-flash-preview-image-generation',  // secondary: newer variant
+    'gemini-2.0-flash-exp',                        // tertiary: experimental fallback
   ];
 
   const reqBody = JSON.stringify({
@@ -1172,25 +1174,31 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
   let genData = null;
   let lastErr  = '';
   for (const model of IMAGE_MODELS) {
-    try {
-      const res = await fetchT(
-        `${GEMINI_BASE}/${model}:generateContent?key=${key}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody },
-        90000
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        lastErr = `${model} HTTP ${res.status}: ${data?.error?.message || ''}`;
-        console.warn('[DASH] model failed:', lastErr);
-        continue;
+    for (let attempt = 0; attempt < 2; attempt++) {   // attempt 0 = first try, 1 = retry
+      try {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 8000));  // wait 8s before retry
+        const res = await fetchT(
+          `${GEMINI_BASE}/${model}:generateContent?key=${key}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody },
+          90000
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          lastErr = `${model} HTTP ${res.status}: ${data?.error?.message || ''}`;
+          console.warn('[DASH] model failed:', lastErr);
+          if (res.status === 503) continue;   // overloaded → retry once
+          break;                              // 4xx or other → skip this model
+        }
+        genData = data;
+        console.log('[DASH] image model used:', model, attempt > 0 ? '(retry)' : '');
+        break;
+      } catch (e) {
+        lastErr = `${model}: ${e.message}`;
+        console.warn('[DASH] model error:', lastErr);
+        break;
       }
-      genData = data;
-      console.log('[DASH] image model used:', model);
-      break;
-    } catch (e) {
-      lastErr = `${model}: ${e.message}`;
-      console.warn('[DASH] model error:', lastErr);
     }
+    if (genData) break;
   }
   if (!genData) throw new Error(`All image models failed. Last: ${lastErr}`);
 
