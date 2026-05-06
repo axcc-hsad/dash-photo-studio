@@ -1184,10 +1184,20 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
 }
 
 // ── Tier 1: Gemini native image generation ────────────────────────
+// Try multiple (apiBase × model) combinations in order.
+// gemini-2.0-flash-exp works on v1 but returns 404 on v1beta — so we try both.
 async function _generateViaGemini(key, productB64, productMime, productType, prompt) {
-  const GEMINI_IMG_MODELS = [
-    'gemini-2.0-flash-preview-image-generation',
-    'gemini-2.5-flash-preview-image-generation',
+  const V1BETA = 'https://generativelanguage.googleapis.com/v1beta/models';
+  const V1     = 'https://generativelanguage.googleapis.com/v1/models';
+
+  // Each entry: [apiBase, modelName]
+  const COMBOS = [
+    [V1BETA, 'gemini-2.0-flash-preview-image-generation'],
+    [V1,     'gemini-2.0-flash-preview-image-generation'],
+    [V1BETA, 'gemini-2.0-flash-exp'],
+    [V1,     'gemini-2.0-flash-exp'],
+    [V1BETA, 'gemini-2.5-flash-preview-image-generation'],
+    [V1,     'gemini-2.5-flash-preview-image-generation'],
   ];
 
   const parts = [];
@@ -1203,28 +1213,31 @@ async function _generateViaGemini(key, productB64, productMime, productType, pro
     generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
   });
 
-  for (const model of GEMINI_IMG_MODELS) {
+  for (const [base, model] of COMBOS) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (attempt > 0) await new Promise(r => setTimeout(r, 8000));
         const res = await fetchT(
-          `${GEMINI_BASE}/${model}:generateContent?key=${key}`,
+          `${base}/${model}:generateContent?key=${key}`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody },
           90000
         );
         const data = await res.json();
         if (!res.ok) {
-          console.warn('[DASH] Gemini img model', model, 'HTTP', res.status, data?.error?.message?.slice(0, 60));
-          if (res.status === 503) continue;
-          break;
+          console.warn(`[DASH] Gemini img [${model} @ ${base.includes('v1beta') ? 'v1beta' : 'v1'}] HTTP ${res.status}:`, data?.error?.message?.slice(0, 80));
+          if (res.status === 503) continue;  // overloaded → retry once
+          break;                             // 404/403 → skip this combo
         }
         const resParts = data.candidates?.[0]?.content?.parts ?? [];
         for (const p of resParts) {
           if (p.inlineData?.data) {
-            console.log('[DASH] Tier 1 success:', model);
+            console.log(`[DASH] Tier 1 success: ${model} @ ${base.includes('v1beta') ? 'v1beta' : 'v1'}`);
             return `data:${p.inlineData.mimeType || 'image/jpeg'};base64,${p.inlineData.data}`;
           }
         }
+        // Response was ok but no image data — move to next combo
+        console.warn('[DASH] Gemini img: no image part in response for', model);
+        break;
       } catch (e) {
         console.warn('[DASH] Gemini img error:', e.message);
         break;
