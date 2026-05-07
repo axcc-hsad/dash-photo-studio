@@ -336,9 +336,10 @@ function demoScrape(url) {
 
 // ══ Image grid ═══════════════════════════════════════════════════
 function imageGrid() {
-  const items = S.candidates.slice(0, 5);
+  const items = S.candidates.slice(0, 6);
   const wrap  = document.createElement('div');
   wrap.className = 'rich-block';
+  const isKo = S.lang === 'ko';
   wrap.innerHTML = `
     <div class="img-grid" id="igrid">
       ${items.map((c, i) => `
@@ -348,9 +349,48 @@ function imageGrid() {
     </div>
     <div class="act-row" style="margin-top:12px;justify-content:center">
       <button class="act-btn primary" onclick="confirmImg()">${t('btnPick')}</button>
-      <button class="act-btn outline" onclick="doResetUrl()">${S.lang==='ko'?'URL 다시 입력':'Re-enter URL'}</button>
+      <button class="act-btn outline" onclick="doResetUrl()">${isKo?'URL 다시 입력':'Re-enter URL'}</button>
+    </div>
+    <div class="manual-url-hint" style="margin-top:14px;padding:10px 14px;background:#f7f7f7;border-radius:10px;font-size:13px;color:#555;">
+      <div style="margin-bottom:6px;">${isKo
+        ? '💡 원하는 누끼컷이 없으면 제품 이미지 URL을 직접 입력해주세요.'
+        : '💡 If the right packshot isn\'t shown, paste the product image URL directly.'}</div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <input id="manualImgUrl" type="url"
+          placeholder="${isKo?'이미지 URL 붙여넣기…':'Paste image URL…'}"
+          style="flex:1;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;outline:none;"
+          onkeydown="if(event.key==='Enter')useManualUrl()"/>
+        <button class="act-btn outline" style="padding:6px 12px;font-size:13px;" onclick="useManualUrl()">
+          ${isKo?'이 이미지 사용':'Use this image'}
+        </button>
+      </div>
     </div>`;
   return wrap;
+}
+
+function useManualUrl() {
+  const input = document.getElementById('manualImgUrl');
+  const url   = (input?.value || '').trim();
+  if (!url || !/^https?:\/\//i.test(url)) {
+    input?.focus();
+    return;
+  }
+  // Inject as a new candidate at position 0 and auto-select it
+  const manualCandidate = { url, label: S.lang === 'ko' ? '직접 입력 이미지' : 'Custom Image', score: 5.0 };
+  S.candidates = [manualCandidate, ...S.candidates.filter(c => c.url !== url)];
+  S.pickedIdx  = 0;
+
+  // Re-render the grid
+  const grid = document.getElementById('igrid');
+  if (grid) {
+    const items = S.candidates.slice(0, 6);
+    grid.innerHTML = items.map((c, i) => `
+      <div class="img-card${i===0?' sel':''}" onclick="pickImg(${i},this)">
+        <img src="${c.url}" alt="${c.label}" loading="lazy"/>
+      </div>`).join('');
+  }
+  input.value = '';
+  if (input) input.placeholder = S.lang === 'ko' ? '✓ 추가됨 — 위 이미지를 확인하세요' : '✓ Added — check the grid above';
 }
 
 function pickImg(i) {

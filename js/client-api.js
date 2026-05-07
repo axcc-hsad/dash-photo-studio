@@ -630,18 +630,18 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
 
   // 2. Deduplicate: same slot number = same physical image from different CDNs
   //    e.g. medium01.jpg + GSXV80PZLE_AEK_1.jpg → keep highest-scored URL for slot 1
-  const deduped = deduplicateBySlot(pool);   // returns slots 1-5, sorted by slot
+  const deduped = deduplicateBySlot(pool);   // returns slots 1-6, sorted by slot
   console.log('[DASH] After dedup:', deduped.length, 'unique images');
 
-  // 3. If still > 5 (shouldn't happen after dedup), take top 5 by score
-  const finalUrls = deduped.length > 5
-    ? deduped.sort((a, b) => lgScore(b) - lgScore(a)).slice(0, 5)
+  // 3. If still > 6 (shouldn't happen after dedup), take top 6 by score
+  const finalUrls = deduped.length > 6
+    ? deduped.sort((a, b) => lgScore(b) - lgScore(a)).slice(0, 6)
     : deduped;
 
-  const VIEW_LABELS = ['Front View', 'Side View', '3/4 Angle', 'Detail Shot', 'Lifestyle'];
-  const QC_SCORES   = [4.8, 4.3, 4.0, 3.7, 3.5];
+  const VIEW_LABELS = ['Front View', 'Side View', '3/4 Angle', 'Detail Shot', 'Back View', 'Alt View'];
+  const QC_SCORES   = [4.8, 4.3, 4.0, 3.7, 3.5, 3.2];
 
-  let candidateImages = finalUrls.slice(0, 5).map((url, i) => ({
+  let candidateImages = finalUrls.slice(0, 6).map((url, i) => ({
     url,
     label: VIEW_LABELS[i] || `View ${i + 1}`,
     score: QC_SCORES[i]  || 3.0,
@@ -923,11 +923,18 @@ function slotIndex(url) {
   // D01.jpg, D02.jpg etc. → dimension images, never show
   if (/^[Dd]\d+\./i.test(filename)) return 99;
 
-  // ── AEM flat format: MODEL_WIDTHxHEIGHT_Name.jpg ─────────────────
+  // ── Numbered AEM gallery: NN_WxH_MODEL.jpg → slot NN ────────────
+  // e.g. 01_2010x1334_WT1210WWF.jpg → slot 1
+  //      12_1044x1334_WT1210WWF.jpg → slot 12 (> 10 → skipped by deduplicateBySlot)
+  // Must check BEFORE the generic aemFlat pattern to avoid misidentifying.
+  const aemNumGallery = filename.match(/^(\d{1,2})_\d{3,4}x\d{3,4}_/i);
+  if (aemNumGallery) return parseInt(aemNumGallery[1], 10);
+
+  // ── AEM flat format: MODEL_WIDTHxHEIGHT_ViewName.jpg ─────────────
   // e.g. 43NANO906AB_2010x1334-Front.jpg, 43NANO906AB_350x350_Side.jpg
-  // The size digits must NOT be treated as a slot number.
-  // Instead, map the descriptive name suffix to a standard slot.
-  const aemFlat = filename.match(/\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
+  // Only applies when filename starts with a model identifier (NOT NN_ prefix).
+  // Map the descriptive view name suffix to a standard slot.
+  const aemFlat = filename.match(/^[A-Za-z0-9]{4,}_\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
   if (aemFlat) {
     const name = aemFlat[1].toLowerCase();
     if (/^front/i.test(name))                   return 1;
@@ -969,15 +976,15 @@ function deduplicateBySlot(urls) {
   const numbered = [...slots.entries()]
     .sort(([a], [b]) => a - b)
     .map(([, url]) => url)
-    .slice(0, 5);  // max 5 images
+    .slice(0, 6);  // max 6 images
 
   // Safety fallback: if no images had standard numeric slots (AEM descriptive naming, etc.),
-  // deduplicate by filename first (to avoid same image in 3 different sizes taking all 5 slots),
-  // then score-sort and take top 5.
+  // deduplicate by filename first (to avoid same image in 3 different sizes taking all 6 slots),
+  // then score-sort and take top 6.
   if (numbered.length === 0 && urls.length > 0) {
     console.log('[DASH] dedup: no numbered slots — filename-dedup + score-sort for', urls.length, 'images');
     const byFile = deduplicateByFilename(urls);
-    return byFile.sort((a, b) => lgScore(b) - lgScore(a)).slice(0, 5);
+    return byFile.sort((a, b) => lgScore(b) - lgScore(a)).slice(0, 6);
   }
 
   return numbered;
@@ -1028,16 +1035,22 @@ function isSpecImage(url) {
   // add-1 (rear), add-2 (panel), add-3 (feature), add-6 (in-situ) may be ok → kept
   if (/[-_]add[-_](?:4|5)\b/i.test(fname)) return true;   // add-4 = dimensions, add-5 = installation
 
-  // ── AEM flat product images: MODEL_WxH_Name.jpg ───────────────────
-  // LG UK/EU newer products serve images as flat files (no /gallery/ subfolder):
+  // ── AEM flat product images: MODEL_WxH_ViewName.jpg ──────────────
+  // LG UK/EU newer products (e.g. NanoCell) serve images as flat files:
   //   43NANO906AB_2010x1334-Front.jpg  ← packshot ✓
   //   43NANO906AB_2010x1334_a7_Gen8.jpg ← chip feature ✗
   // For these, ONLY accept confirmed packshot view names.
-  const aemFlatSuffix = fname.match(/\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
-  if (aemFlatSuffix) {
-    const namePart = aemFlatSuffix[1].toLowerCase();
-    const isPackshot = /^(?:front|side|back|rear|angle|corner|top|bottom|profile|view|open|close|lightoff|lighton|studio)/i.test(namePart);
-    if (!isPackshot) return true;  // reject: not a confirmed packshot name
+  //
+  // IMPORTANT: do NOT apply this check to numbered gallery images (NN_WxH_MODEL.jpg)
+  //   e.g. 01_2010x1334_WT1210WWF.jpg — these are always packshots (numbered gallery series).
+  const isNumberedGallery = /^\d{1,2}_\d{3,4}x\d{3,4}_/.test(fname);
+  if (!isNumberedGallery) {
+    const aemFlatSuffix = fname.match(/^[A-Za-z0-9]{4,}_\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
+    if (aemFlatSuffix) {
+      const namePart = aemFlatSuffix[1].toLowerCase();
+      const isPackshot = /^(?:front|side|back|rear|angle|corner|top|bottom|profile|view|open|close|lightoff|lighton|studio)/i.test(namePart);
+      if (!isPackshot) return true;  // reject: not a confirmed packshot name
+    }
   }
 
   return false;
