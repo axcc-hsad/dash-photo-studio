@@ -1171,18 +1171,20 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
   });
 
   // ── 3. 모델 순서대로 시도 ─────────────────────────────────────────
-  // v1beta / v1 두 API 버전 × 여러 모델명 조합 시도.
+  // 이미지 생성 전용 모델만 사용.
+  // - gemini-2.0-flash-exp-image-generation : 실제 존재하는 이미지 생성 모델
+  // - gemini-2.0-flash-preview-image-generation : 가능한 alias
+  // gemini-2.0-flash-exp (text 모델) / gemini-2.5-flash-* 는
+  //   responseModalities 를 generationConfig 안에서 지원 안 함 → 400 → 제외.
   // 503 = 과부하(일시적) → 8초 대기 후 1회 재시도.
-  // 404/403 = 해당 조합 불가 → 즉시 다음으로.
+  // 404/403/400 = 해당 조합 불가 → 즉시 다음으로.
   const V1B = 'https://generativelanguage.googleapis.com/v1beta/models';
   const V1  = 'https://generativelanguage.googleapis.com/v1/models';
   const MODELS = [
+    [V1B, 'gemini-2.0-flash-exp-image-generation'],
+    [V1,  'gemini-2.0-flash-exp-image-generation'],
     [V1B, 'gemini-2.0-flash-preview-image-generation'],
     [V1,  'gemini-2.0-flash-preview-image-generation'],
-    [V1B, 'gemini-2.0-flash-exp'],
-    [V1,  'gemini-2.0-flash-exp'],
-    [V1B, 'gemini-2.5-flash-preview-image-generation'],
-    [V1,  'gemini-2.5-flash-preview-image-generation'],
   ];
 
   let imageUrl = null;
