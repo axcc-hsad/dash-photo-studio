@@ -1151,7 +1151,18 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
     parts.push({ inlineData: { mimeType: productMime, data: productB64 } });
     parts.push({ text: `This is an LG ${productType} product photo on a plain background.\n${prompt}\nKeep the product exactly as shown in the photo — same model, same color, same proportions. Place it naturally as the hero of the scene.` });
   } else {
-    parts.push({ text: prompt });
+    const PRODUCT_SHAPES = {
+      washer:    'front-loading washing machine with a large circular drum door on the front panel, white or dark metallic finish, laundry appliance',
+      fridge:    'tall refrigerator (French door or side-by-side), stainless steel or white finish, large kitchen appliance',
+      tv:        'large ultra-slim flat screen TV with minimal bezel mounted on a thin stand or wall',
+      monitor:   'widescreen flat computer monitor on an adjustable stand',
+      appliance: 'modern LG home appliance with clean minimal design',
+    };
+    const shape = PRODUCT_SHAPES[productType] || PRODUCT_SHAPES.appliance;
+    const urlRef = productImageUrl
+      ? `\nProduct reference (use this URL to understand the exact product appearance): ${productImageUrl}`
+      : '';
+    parts.push({ text: `Create a photorealistic lifestyle scene featuring an LG ${shape} as the central hero product.${urlRef}\n${prompt}\nIMPORTANT: The product must have the correct silhouette and proportions of an LG ${shape}. Do NOT substitute a different appliance shape.` });
   }
 
   const reqBody = JSON.stringify({
