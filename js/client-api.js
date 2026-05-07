@@ -930,13 +930,16 @@ function slotIndex(url) {
   const aemNumGallery = filename.match(/^(\d{1,2})_\d{3,4}x\d{3,4}_/i);
   if (aemNumGallery) return parseInt(aemNumGallery[1], 10);
 
-  // ── AEM flat format: MODEL_WIDTHxHEIGHT_ViewName.jpg ─────────────
-  // e.g. 43NANO906AB_2010x1334-Front.jpg, 43NANO906AB_350x350_Side.jpg
-  // Only applies when filename starts with a model identifier (NOT NN_ prefix).
-  // Map the descriptive view name suffix to a standard slot.
+  // ── AEM flat format: MODEL_WxH_Suffix.jpg ────────────────────────
+  // Two sub-types:
+  //   B) MODEL_WxH_N.jpg        e.g. 75NANO80A6B_2010x1334_1.jpg  → slot N
+  //   C) MODEL_WxH_ViewName.jpg e.g. 43NANO906AB_2010x1334-Front.jpg → slot by name
   const aemFlat = filename.match(/^[A-Za-z0-9]{4,}_\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
   if (aemFlat) {
     const name = aemFlat[1].toLowerCase();
+    // Pattern B: suffix is a plain integer → use it directly as slot
+    if (/^\d+$/.test(name)) return parseInt(name, 10);
+    // Pattern C: descriptive view name → map to standard slot
     if (/^front/i.test(name))                   return 1;
     if (/^(?:side|profile)/i.test(name))         return 2;
     if (/^(?:back|rear)/i.test(name))            return 3;
@@ -994,8 +997,10 @@ function deduplicateBySlot(urls) {
 //
 // Each LG product category has its own CDN filename conventions:
 //
-//   TV / Monitor  — AEM flat:     MODEL_WxH_ViewName.jpg
+//   TV / Monitor  — AEM flat (descriptive): MODEL_WxH_ViewName.jpg
 //                                 e.g. 43NANO906AB_2010x1334-Front.jpg
+//                 — AEM flat (numbered):    MODEL_WxH_N.jpg
+//                                 e.g. 75NANO80A6B_2010x1334_1.jpg
 //                 — Classic:      mediumNN.jpg
 //
 //   Washer / WashTower
@@ -1058,34 +1063,46 @@ function isSpecImage(url, productType = 'appliance') {
 
   // ══ CATEGORY-SPECIFIC AEM FLAT FILENAME ANALYSIS ═════════════════
   //
-  // Two AEM flat patterns to distinguish:
-  //   A) Numbered gallery:   NN_WxH_MODEL.jpg  → ALWAYS packshot (ordered series)
-  //   B) Descriptive flat:   MODEL_WxH_ViewName.jpg → category-specific positive filter
+  // LG uses THREE different AEM flat filename conventions:
   //
-  // Pattern A — numbered gallery (01–12): always a product packshot, never reject.
-  // Safe because the WxH portion starts with a digit, ruling out "01_Feature.jpg" above.
-  const isNumberedGallery = /^\d{1,2}_\d{3,4}x\d{3,4}_/.test(fname);
-  if (isNumberedGallery) return false;  // ✅ always a packshot, stop here
+  //   A) NN_WxH_MODEL.jpg     — Washer/WashTower numbered series (01–12)
+  //                             e.g. 01_2010x1334_WT1210WWF.jpg → always packshot
+  //
+  //   B) MODEL_WxH_N.jpg      — TV numbered gallery series (1–10)
+  //                             e.g. 75NANO80A6B_2010x1334_1.jpg → always packshot
+  //                             The trailing N is a plain integer slot index.
+  //
+  //   C) MODEL_WxH_ViewName.jpg — Descriptive view name (some TV/Fridge)
+  //                             e.g. 43NANO906AB_2010x1334-Front.jpg
+  //                             → category-specific positive filter on ViewName
 
-  // Pattern B — MODEL_WxH_ViewName.jpg: apply category-specific positive filter
+  // Pattern A — Washer/WashTower numbered (NN_WxH_MODEL): always packshot.
+  const isNumberedGallery = /^\d{1,2}_\d{3,4}x\d{3,4}_/.test(fname);
+  if (isNumberedGallery) return false;  // ✅ always packshot
+
+  // Patterns B & C — MODEL_WxH_Suffix.jpg
   const flatMatch = fname.match(/^[A-Za-z0-9]{4,}_\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
   if (flatMatch) {
     const viewName = flatMatch[1].toLowerCase();
 
-    // Universal packshot view keywords (accepted for ALL categories)
-    const PACKSHOT_VIEW = /^(?:front|side|back|rear|angle|corner|top|bottom|profile|view|lightoff|lighton|studio)/i;
-    if (PACKSHOT_VIEW.test(viewName)) return false;  // ✅ confirmed packshot
+    // Pattern B — trailing integer suffix (MODEL_WxH_N.jpg): numbered gallery series.
+    // e.g. 75NANO80A6B_2010x1334_1.jpg  →  viewName = '1'  → slot 1, always packshot.
+    if (/^\d+$/.test(viewName)) return false;  // ✅ numbered series, always packshot
 
-    // Category-specific rules for non-packshot viewName suffixes:
+    // Pattern C — descriptive ViewName: universal packshot view keywords.
+    const PACKSHOT_VIEW = /^(?:front|side|back|rear|angle|corner|top|bottom|profile|view|lightoff|lighton|studio)/i;
+    if (PACKSHOT_VIEW.test(viewName)) return false;  // ✅ confirmed packshot view
+
+    // Category-specific rules for unrecognised viewName:
     switch (productType) {
 
       case 'tv':
       case 'monitor':
         // TV/Monitor — strict positive filter.
-        // Non-packshot names include: Lifestyle, Remote, Ports, Details, TECH, SPORT, MOVIE,
-        // content/feature names, and tech identifiers (a7, gen, processor, nanocell, hdr,
-        // dolby, atmos, webos, ai, alpha, oled, qned, evo).
-        // Anything not matching PACKSHOT_VIEW above → reject.
+        // Reject everything that isn't a known packshot view or numbered slot.
+        // Non-packshot names: Lifestyle, Remote, Ports, Details, TECH, SPORT, MOVIE,
+        // content names, and tech feature identifiers (a7, gen, processor, nanocell,
+        // hdr, dolby, atmos, webos, ai, alpha, oled, qned, evo…).
         return true;
 
       case 'washer':
