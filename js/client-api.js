@@ -922,7 +922,31 @@ function slotIndex(url) {
   const filename = url.split('/').pop().split('?')[0];
   // D01.jpg, D02.jpg etc. → dimension images, never show
   if (/^[Dd]\d+\./i.test(filename)) return 99;
-  // Extract trailing number before extension: medium03 → 3, F2X50S9TBB_AEK_2.jpg → 2
+
+  // ── AEM flat format: MODEL_WIDTHxHEIGHT_Name.jpg ─────────────────
+  // e.g. 43NANO906AB_2010x1334-Front.jpg, 43NANO906AB_350x350_Side.jpg
+  // The size digits must NOT be treated as a slot number.
+  // Instead, map the descriptive name suffix to a standard slot.
+  const aemFlat = filename.match(/\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
+  if (aemFlat) {
+    const name = aemFlat[1].toLowerCase();
+    if (/^front/i.test(name))                   return 1;
+    if (/^(?:side|profile)/i.test(name))         return 2;
+    if (/^(?:back|rear)/i.test(name))            return 3;
+    if (/^(?:angle|corner|3[-_]?4)/i.test(name)) return 4;
+    if (/^(?:top|bottom|above)/i.test(name))     return 5;
+    return 99; // non-packshot name → drop in slot-based dedup
+  }
+
+  // ── Goldimage CDN: MODEL_AEK_1.jpg → slot 1 ──────────────────────
+  const goldMatch = filename.match(/_(?:[A-Z]{2,5})_(\d+)\.jpg$/i);
+  if (goldMatch) return parseInt(goldMatch[1], 10);
+
+  // ── Classic naming: medium01.jpg → slot 1 ────────────────────────
+  const mediumMatch = filename.match(/medium(\d+)\./i);
+  if (mediumMatch) return parseInt(mediumMatch[1], 10);
+
+  // ── Generic trailing number (legacy fallback) ─────────────────────
   const m = filename.match(/(\d+)\.[a-z]{2,4}$/i);
   return m ? parseInt(m[1], 10) : 99;
 }
@@ -1003,6 +1027,18 @@ function isSpecImage(url) {
   // /d2c-content/.../gallery/.../lg-laundry-MODEL-add-4-450.jpg (add-4=dimensions, add-5=install)
   // add-1 (rear), add-2 (panel), add-3 (feature), add-6 (in-situ) may be ok → kept
   if (/[-_]add[-_](?:4|5)\b/i.test(fname)) return true;   // add-4 = dimensions, add-5 = installation
+
+  // ── AEM flat product images: MODEL_WxH_Name.jpg ───────────────────
+  // LG UK/EU newer products serve images as flat files (no /gallery/ subfolder):
+  //   43NANO906AB_2010x1334-Front.jpg  ← packshot ✓
+  //   43NANO906AB_2010x1334_a7_Gen8.jpg ← chip feature ✗
+  // For these, ONLY accept confirmed packshot view names.
+  const aemFlatSuffix = fname.match(/\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
+  if (aemFlatSuffix) {
+    const namePart = aemFlatSuffix[1].toLowerCase();
+    const isPackshot = /^(?:front|side|back|rear|angle|corner|top|bottom|profile|view|open|close|lightoff|lighton|studio)/i.test(namePart);
+    if (!isPackshot) return true;  // reject: not a confirmed packshot name
+  }
 
   return false;
 }
