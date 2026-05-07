@@ -540,7 +540,7 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
   let pool = [...source]
     .filter(imgUrl)
     .filter(u => /(?:gscs-b2c\.lge\.com|lg\.com\/content\/dam)/i.test(u))  // LG CDN only
-    .filter(u => !isSpecImage(u))
+    .filter(u => !isSpecImage(u, productType))
     .filter(u => !/icon|logo|badge|flag|ribbon|sprite/i.test(u));
 
   // 1b. Product-type exclusion: filter out images whose URL clearly signals a different
@@ -990,11 +990,33 @@ function deduplicateBySlot(urls) {
   return numbered;
 }
 
-// URL-based filter: reject spec drawings, videos, badges, campaign images
-// Called BEFORE vision scoring — catches obvious non-packshots by URL pattern alone.
-function isSpecImage(url) {
+// ══ CATEGORY-AWARE PACKSHOT FILTER ═══════════════════════════════
+//
+// Each LG product category has its own CDN filename conventions:
+//
+//   TV / Monitor  — AEM flat:     MODEL_WxH_ViewName.jpg
+//                                 e.g. 43NANO906AB_2010x1334-Front.jpg
+//                 — Classic:      mediumNN.jpg
+//
+//   Washer / WashTower
+//                 — Numbered AEM: NN_WxH_MODEL.jpg  (UK 2024+)
+//                                 e.g. 01_2010x1334_WT1210WWF.jpg
+//                 — Descriptive:  ProductName_MODEL_View_Variant.jpg
+//                                 e.g. WashTower24_W4W8BVKKZHM_Front_LightOn.jpg
+//                 — Classic:      mediumNN.jpg
+//
+//   Fridge        — Classic:      mediumNN.jpg  (most common)
+//                 — AEM flat:     MODEL_WxH_ViewName.jpg (newer)
+//
+//   Fallback      — When none of the above filename rules match,
+//                   caller falls through to ordered 1-6 probe.
+//
+// Called BEFORE vision scoring. Returns true = reject this image.
+function isSpecImage(url, productType = 'appliance') {
   const u = url.toLowerCase();
   const fname = u.split('/').pop().split('?')[0];
+
+  // ══ COMMON FILTERS (all categories) ══════════════════════════════
 
   // ── Dimension / installation drawings ────────────────────────────
   if (/dimension|install(?:ation)?|spec[_-]|schematic|diagram|drawing|manual|technical|measure/i.test(u)) return true;
@@ -1009,47 +1031,77 @@ function isSpecImage(url) {
   if (/\/feature[s]?\/|\/highlight[s]?\/|\/campaign[s]?\/|\/hero-video\//i.test(u)) return true;
   if (/\/banner\/|\/promo\/|\/landing\/|\/teaser\//i.test(u)) return true;
   if (/\/icon[s]?\/|\/badge[s]?\/|\/award[s]?\/|\/certif/i.test(u)) return true;
-  if (/\/energy[-_]|\/rating[-_]|\/label[-_]/i.test(u)) return true;   // energy-label graphics
+  if (/\/energy[-_]|\/rating[-_]|\/label[-_]/i.test(u)) return true;
 
-  // ── Fixed pixel-size crops used for video/UI overlays ────────────
+  // ── Fixed pixel-size video/UI crops ──────────────────────────────
   if (/[_-]1280x720[_.-]|[_-]800x450[_.-]|[_-]960x540[_.-]|[_-]1920x1080[_.-]/i.test(u)) return true;
 
   // ── LG AEM area-thumbnail / UI naming ────────────────────────────
   if (/_at_\d|[-_]ui[-_]|[-_]scene\d|[-_]banner\d/i.test(u)) return true;
 
-  // ── Filename-based USP/feature patterns ──────────────────────────
-  // e.g. 01_AIDD_W4X7016TBB.jpg, usp-steam.jpg, kv_hero.jpg
-  if (/[-_](aidd|turbowash|steamgo|wideband|directdrive|inverter|energysaving|smartcontrol)/i.test(u)) return true;
-  if (/^(?:0[1-9]|[1-9]\d)_[a-z]/i.test(fname)) return true;   // "01_Feature.jpg"
+  // ── Generic USP / KV / hero naming ───────────────────────────────
   if (/\/kv[-_]|[-_]kv\d|\/hero[-_]|[-_]hero\./i.test(u)) return true;
   if (/usp[-_]|[-_]usp\d|feature[-_]img|featureimage/i.test(u)) return true;
 
-  // ── Warranty / guarantee / award badge images ─────────────────────
-  // LG galleries sometimes include guarantee badges (e.g. "5YearGuarantee.jpg")
+  // ── Washer-specific USP feature filenames ─────────────────────────
+  if (/[-_](aidd|turbowash|steamgo|wideband|directdrive|energysaving|smartcontrol)/i.test(u)) return true;
+  // "01_Feature.jpg" style (NOT numbered gallery — those have digits after NN_)
+  if (/^(?:0[1-9]|[1-9]\d)_[a-z]/i.test(fname)) return true;
+
+  // ── Warranty / guarantee / award badges ───────────────────────────
   if (/warrant|guarant|certif|award|trophy|prize/i.test(fname)) return true;
   if (/[_-](\d+)year[_-]?(?:parts?|labour|guarantee|warranty)/i.test(fname)) return true;
   if (/5yr|10yr|\d+yr[-_]/i.test(fname)) return true;
 
-  // ── d2c-content "add-N" spec images (dimensions, installation) ────
-  // /d2c-content/.../gallery/.../lg-laundry-MODEL-add-4-450.jpg (add-4=dimensions, add-5=install)
-  // add-1 (rear), add-2 (panel), add-3 (feature), add-6 (in-situ) may be ok → kept
-  if (/[-_]add[-_](?:4|5)\b/i.test(fname)) return true;   // add-4 = dimensions, add-5 = installation
+  // ── d2c-content dimension / installation add-N images ─────────────
+  if (/[-_]add[-_](?:4|5)\b/i.test(fname)) return true;
 
-  // ── AEM flat product images: MODEL_WxH_ViewName.jpg ──────────────
-  // LG UK/EU newer products (e.g. NanoCell) serve images as flat files:
-  //   43NANO906AB_2010x1334-Front.jpg  ← packshot ✓
-  //   43NANO906AB_2010x1334_a7_Gen8.jpg ← chip feature ✗
-  // For these, ONLY accept confirmed packshot view names.
+  // ══ CATEGORY-SPECIFIC AEM FLAT FILENAME ANALYSIS ═════════════════
   //
-  // IMPORTANT: do NOT apply this check to numbered gallery images (NN_WxH_MODEL.jpg)
-  //   e.g. 01_2010x1334_WT1210WWF.jpg — these are always packshots (numbered gallery series).
+  // Two AEM flat patterns to distinguish:
+  //   A) Numbered gallery:   NN_WxH_MODEL.jpg  → ALWAYS packshot (ordered series)
+  //   B) Descriptive flat:   MODEL_WxH_ViewName.jpg → category-specific positive filter
+  //
+  // Pattern A — numbered gallery (01–12): always a product packshot, never reject.
+  // Safe because the WxH portion starts with a digit, ruling out "01_Feature.jpg" above.
   const isNumberedGallery = /^\d{1,2}_\d{3,4}x\d{3,4}_/.test(fname);
-  if (!isNumberedGallery) {
-    const aemFlatSuffix = fname.match(/^[A-Za-z0-9]{4,}_\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
-    if (aemFlatSuffix) {
-      const namePart = aemFlatSuffix[1].toLowerCase();
-      const isPackshot = /^(?:front|side|back|rear|angle|corner|top|bottom|profile|view|open|close|lightoff|lighton|studio)/i.test(namePart);
-      if (!isPackshot) return true;  // reject: not a confirmed packshot name
+  if (isNumberedGallery) return false;  // ✅ always a packshot, stop here
+
+  // Pattern B — MODEL_WxH_ViewName.jpg: apply category-specific positive filter
+  const flatMatch = fname.match(/^[A-Za-z0-9]{4,}_\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
+  if (flatMatch) {
+    const viewName = flatMatch[1].toLowerCase();
+
+    // Universal packshot view keywords (accepted for ALL categories)
+    const PACKSHOT_VIEW = /^(?:front|side|back|rear|angle|corner|top|bottom|profile|view|lightoff|lighton|studio)/i;
+    if (PACKSHOT_VIEW.test(viewName)) return false;  // ✅ confirmed packshot
+
+    // Category-specific rules for non-packshot viewName suffixes:
+    switch (productType) {
+
+      case 'tv':
+      case 'monitor':
+        // TV/Monitor — strict positive filter.
+        // Non-packshot names include: Lifestyle, Remote, Ports, Details, TECH, SPORT, MOVIE,
+        // content/feature names, and tech identifiers (a7, gen, processor, nanocell, hdr,
+        // dolby, atmos, webos, ai, alpha, oled, qned, evo).
+        // Anything not matching PACKSHOT_VIEW above → reject.
+        return true;
+
+      case 'washer':
+        // Washer/WashTower — MODEL_WxH_ViewName is uncommon; the primary format is NN_WxH_MODEL.
+        // When it does appear, reject known non-packshot washer names only.
+        return /(?:lifestyle|campaign|feature|promo|poster|capacity|drum[-_]?tech|steam|turbowash|inverter|motor|ai[-_]?dd)/i.test(viewName);
+
+      case 'fridge':
+        // Fridge — Accept packshot views + close-up interior details that can be useful.
+        // Reject lifestyle/campaign/feature names.
+        if (/^(?:door|panel|tray|shelf|bin|drawer|interior|inside|handle)/i.test(viewName)) return false;
+        return /(?:lifestyle|campaign|feature|promo|poster|tech|spec)/i.test(viewName);
+
+      default:
+        // Unknown/appliance — moderate: reject obvious non-packshot names only.
+        return /(?:lifestyle|campaign|feature|promo|poster|tech[-_]spec|banner)/i.test(viewName);
     }
   }
 
