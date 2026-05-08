@@ -744,15 +744,17 @@ async function visionScoreImages(candidates, productType, pageUrl = '') {
 function _visionPrompt(productType, urlList, context = '') {
   const typeGuide = {
     tv: [
-      'Full TV set clearly front-facing with rectangular frame/bezel AND stand on white or plain background = score 3',
-      'Full TV set at a slight angle (¾ view) on plain background, frame clearly visible = score 2',
-      'TV frame/bezel visible but screen shows demo content (movie, game, nature scene) = score 2',
-      'Back or side profile of TV body on plain background, no labels or icons overlaid = score 1',
-      'Back panel showing connectivity ports WITH icon labels/diagrams overlaid (Backports, HDMI, USB, Aerial layout) = score 0',
-      'Technology feature graphic, processor/chip illustration, comparison diagram, or spec infographic = score 0',
-      'Screen-only content with NO visible TV frame, bezel, or stand = score 0',
-      'Remote control only, or accessory without TV body = score 0',
-      'Large text or logo overlay dominating more than half the image = score 0',
+      'Full TV set clearly front-facing, frame/bezel AND stand both visible, white or plain background, nothing on screen = score 3',
+      'Full TV set front-facing, frame/bezel AND stand visible, screen shows a nature/movie image (NO text) = score 3',
+      'Full TV set front-facing with stand, screen shows branded demo content with small logo text at edge = score 2',
+      'Full TV set at a slight angle (¾ view) on plain background, frame and stand clearly visible = score 2',
+      'Back or side profile of the TV body on plain background, no port labels or spec diagrams overlaid = score 1',
+      'Back panel showing connectivity ports WITH overlaid icon labels (HDMI / USB / LAN / Aerial / Optical layout) = score 0',
+      'Technology feature graphic, chip/processor illustration, comparison chart, or spec infographic = score 0',
+      'Screen image fills entire frame with NO visible TV bezel, frame, or stand = score 0',
+      'Remote control only, or small accessory with no TV body visible = score 0',
+      'Large text block, brand slogan, or marketing graphic PRINTED OVER the physical TV body (outside the screen) dominating the image = score 0',
+      'NOTE: text or images appearing INSIDE the TV screen area are normal demo content — do NOT lower the score for on-screen content alone',
     ],
     laundry: [
       'Front-facing or 3/4 packshot on white/light gray background = score 3',
@@ -1515,7 +1517,7 @@ async function clientGenerateImage(productImageUrl, productType, region, ratio, 
   const parts = [];
   if (productB64) {
     parts.push({ inlineData: { mimeType: productMime, data: productB64 } });
-    parts.push({ text: `This is an LG ${productType} product photo on a plain background.\n${prompt}\nKeep the product exactly as shown in the photo — same model, same color, same proportions. Place it naturally as the hero of the scene.` });
+    parts.push({ text: `This is an LG ${productType} product photo on a plain background.\n${prompt}\nKeep the product exactly as shown in the photo — same model, same color, same proportions. Place it naturally as the hero of the scene.\nIMPORTANT — stand vs wall-mount: If the product photo shows a stand or legs at the bottom of the TV, the TV MUST be placed sitting ON a TV unit, sideboard, or media console with its stand clearly visible — do NOT mount it on a wall. Only use wall-mounting if the photo shows a TV with NO stand (gallery/frame-style TV designed for wall installation).` });
   } else {
     const PRODUCT_SHAPES = {
       washer:    'front-loading washing machine with a large circular drum door on the front panel, white or dark metallic finish, laundry appliance',
