@@ -60,7 +60,8 @@ async function clientScrape(url) {
   if (gemR.status === 'fulfilled' && gemR.value) {
     const g = gemR.value;
     if (g.productName)            name = g.productName;
-    if (g.productType)            type = g.productType;
+    // normalizeType maps Gemini's "washer" → "laundry" so downstream vision/filter rules match
+    if (g.productType)            type = normalizeType(g.productType) || type;
     if (g.productFeatures?.length) feat = g.productFeatures;
     (g.imageUrls || []).filter(imgUrl).forEach(u => imgs.add(u));
     console.log('[DASH] Gemini: ok, type =', g.productType);
@@ -368,7 +369,7 @@ URL: ${url}
 Required JSON:
 {
   "productName": "full product name as listed on the page",
-  "productType": "fridge or washer or tv or appliance",
+  "productType": "fridge or laundry or tv or monitor or appliance",
   "productFeatures": ["key spec 1", "key spec 2", "key spec 3", "key spec 4", "key spec 5"],
   "imageUrls": ["https://full-cdn-image-url.jpg"]
 }
@@ -451,10 +452,10 @@ If you cannot access the page, infer productType from the URL path and leave ima
 function normalizeType(t) {
   if (!t) return null;
   const s = String(t).toLowerCase();
-  if (/fridge|refrig|freezer/.test(s))       return 'fridge';
-  if (/wash|dryer|washtower/.test(s))         return 'washer';
-  if (/monitor|ultrawide|curved.?screen/.test(s)) return 'monitor';
-  if (/tv|oled|qned|display|soundbar/.test(s)) return 'tv';
+  if (/fridge|refrig|freezer/.test(s))                          return 'fridge';
+  if (/laundry|washing|tumble|wash|dryer|washtower/.test(s))    return 'laundry';
+  if (/monitor|ultrawide|curved.?screen/.test(s))               return 'monitor';
+  if (/tv|oled|qned|display|soundbar/.test(s))                  return 'tv';
   return 'appliance';
 }
 
@@ -551,7 +552,7 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
                'sèche-linge', 'refrigerator', 'fridge', 'congel', 'refrigerateur',
                'dishwasher', 'lave-vaisselle', 'vacuum', 'air-purif', 'purif-air'],
     fridge:   ['washer', 'dryer', 'washing-machine', 'dishwasher', 'televisions', 'oled', 'qned'],
-    washer:   ['refrigerator', 'fridge', 'televisions', 'oled', 'qned', 'dishwasher'],
+    laundry:  ['refrigerator', 'fridge', 'televisions', 'oled', 'qned', 'dishwasher'],
     monitor:  ['washer', 'dryer', 'refrigerator', 'fridge', 'dishwasher'],
     appliance:['televisions', 'oled', 'qned'],
   };
@@ -582,14 +583,23 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
 
   const galleryMediumUrls = pool.filter(u => {
     const ul = u.toLowerCase();
-    // Classic medium01.jpg naming — slug is already in the CDN path, no extra check needed
-    if (/\/gallery\/medium\d+\./i.test(u)) return true;
+    // Classic medium01.jpg / large01.jpg naming — slug is already in the CDN path, no extra check needed
+    if (/\/gallery\/(?:medium|large)\d+\./i.test(u)) return true;
+    // German / EU 2025 market: numbered gallery filenames contain "-gallery-NN."
+    // e.g. oled-c5e-2025-83-gallery-01.jpg — CDN path uses model family not slug, but filename is reliable.
+    if (/[_-]gallery[_-]\d+\./i.test(u)) return true;
     // AEM descriptive naming: must ALSO contain the product slug to prevent
     // related-product images (from "You may also like" sections) slipping through.
     // e.g. /images/washtower/wt1210wwf/gallery/...  ← contains slug ✓
     //      /images/washing-machines/f4wv912p2se/gallery/... ← does NOT contain wt1210wwf ✗
     if (/\/content\/dam\/channel\/wcms\/[^/]+\/images\/.+\/gallery\//i.test(u)) {
-      return slugCore && ul.includes(slugCore);
+      if (!slugCore) return false;
+      if (ul.includes(slugCore)) return true;
+      // LG UK sometimes appends a trailing color-variant digit to the page slug that
+      // is absent from the CDN folder name (e.g. gsxv91mcae1 → CDN: GSXV91MCAE_...).
+      // Try matching with the trailing digit stripped when slug is long enough.
+      if (/\d$/.test(slugCore) && slugCore.length > 7) return ul.includes(slugCore.slice(0, -1));
+      return false;
     }
     return false;
   });
@@ -723,11 +733,14 @@ function _visionPrompt(productType, urlList, context = '') {
       'ONLY screen content with no visible frame/bezel = score 0',
       'Large text/logo overlay ("LG QNED evo AI / 2025") covering most of image = score 0',
     ],
-    washer: [
+    laundry: [
       'Front-facing or 3/4 packshot on white/light gray background = score 3',
-      'Open drum detail or side profile on white background = score 2',
-      'Washer in a kitchen/laundry room lifestyle scene WITH PEOPLE = score 0',
-      'Internal drum close-up (no product outline) = score 1',
+      'Door-open front view or side profile on white background = score 2',
+      'Left/right side view on white or neutral background = score 2',
+      'Back view on plain background = score 1',
+      'Laundry appliance in a kitchen/laundry room lifestyle scene WITH PEOPLE = score 0',
+      'Internal drum close-up or detail crop with no full product outline = score 0',
+      'Dimension/installation diagram, energy label or USP feature graphic = score 0',
     ],
     fridge: [
       'Front door closed on white/neutral background = score 3',
@@ -926,9 +939,62 @@ function slotIndex(url) {
   // ── Numbered AEM gallery: NN_WxH_MODEL.jpg → slot NN ────────────
   // e.g. 01_2010x1334_WT1210WWF.jpg → slot 1
   //      12_1044x1334_WT1210WWF.jpg → slot 12 (> 10 → skipped by deduplicateBySlot)
-  // Must check BEFORE the generic aemFlat pattern to avoid misidentifying.
+  // Must check BEFORE Pattern D to avoid misidentifying.
   const aemNumGallery = filename.match(/^(\d{1,2})_\d{3,4}x\d{3,4}_/i);
   if (aemNumGallery) return parseInt(aemNumGallery[1], 10);
+
+  // ── Pattern D: NN_ProductName_..._ViewName.jpg → slot by view name ──────────
+  // Washer-dryers, Tumble dryers (and some Washing machines without WxH prefix).
+  // e.g. 01_Vivace_R500_10-6kg_MiddleBlack_F4Y5RRPYJY_UK_Front.jpg  → slot 1
+  //      07_Vivace_V500_9KG_MiddleBlack_Dryer_RH90V5MVTN_UK_LeftSide.jpg → slot 7
+  //      15_Vivace_R500_10-6kg_MiddleBlack_F4Y5RRPYJY_UK_Back.jpg   → slot 3
+  // NN may exceed 10 for Back (e.g. slot 15) → map view names to stable slots instead.
+  const descGallery = filename.match(/^(\d{1,2})_[A-Za-z].+_([A-Za-z][A-Za-z0-9]*)\.(?:jpe?g|png|webp)$/i);
+  if (descGallery) {
+    const nn = parseInt(descGallery[1], 10);
+    const v  = descGallery[2].toLowerCase();
+    if (/^front$/i.test(v))                        return 1;
+    if (/^frontopen/i.test(v))                     return 2;
+    if (/^(?:side|profile)$/i.test(v))             return 2;
+    if (/^(?:back|rear)/i.test(v))                 return 3;
+    if (/^(?:angle|corner)/i.test(v))              return 4;
+    if (/^(?:top|bottom)/i.test(v))                return 5;
+    // LeftSide, RightSide, RightSideOpen, etc. → use NN directly (all ≤ 10 in practice)
+    return nn <= 10 ? nn : 99;
+  }
+
+  // ── Pattern E: WxH_NN_ProductName_..._ViewName.jpg → slot by view name ──────
+  // Washing machines (UK 2024+) with resolution-prefix filenames.
+  // e.g. 1600-1062_01_Vivace_R500N_11kg_White_F4Y5EYP6W_UK_Front.jpg → slot 1
+  //      1600-1062_15_Vivace_R500N_11kg_White_F4Y5EYP6W_UK_Back.jpg  → slot 3
+  const prefixGallery = filename.match(/^\d{3,4}[-x]\d{3,4}_(\d{1,2})_[A-Za-z].+_([A-Za-z][A-Za-z0-9]*)\.(?:jpe?g|png|webp)$/i);
+  if (prefixGallery) {
+    const nn = parseInt(prefixGallery[1], 10);
+    const v  = prefixGallery[2].toLowerCase();
+    if (/^front$/i.test(v))                        return 1;
+    if (/^frontopen/i.test(v))                     return 2;
+    if (/^(?:side|profile)$/i.test(v))             return 2;
+    if (/^(?:back|rear)/i.test(v))                 return 3;
+    if (/^(?:angle|corner)/i.test(v))              return 4;
+    if (/^(?:top|bottom)/i.test(v))                return 5;
+    return nn <= 10 ? nn : 99;
+  }
+
+  // ── Pattern W: WashTower ONLY — WashTowerNN_ModelCode_ViewName[_Variant].jpg ──
+  // e.g. WashTower24_W4W8BVKKZHM_Front_LightOn.jpg  → slot 1
+  //      WashTower24_W4W8BVKKZHM_FrontOpen.jpg       → slot 2
+  //      WashTower24_W4W8BVKKZHM_Back.jpg            → slot 3
+  //      WashTower24_W4W8BVKKZHM_Drum_Washer.jpg     → slot 99 (rejected by dedup)
+  const wtGallery = filename.match(/^WashTower\d*_[A-Za-z0-9]{4,}_([A-Za-z][A-Za-z0-9]*)(?:_[A-Za-z0-9]+)*\.(?:jpe?g|png|webp)$/i);
+  if (wtGallery) {
+    const v = wtGallery[1].toLowerCase();
+    if (/^front$/.test(v))          return 1;
+    if (/^frontopen/.test(v))       return 2;
+    if (/^(?:back|rear)/.test(v))   return 3;
+    if (/^side/.test(v))            return 4;
+    if (/^angle/.test(v))           return 5;
+    return 99;  // Drum, Panel, Drawer → slot 99 → dropped by deduplicateBySlot
+  }
 
   // ── AEM flat format: MODEL_WxH_Suffix.jpg ────────────────────────
   // Two sub-types:
@@ -1003,12 +1069,24 @@ function deduplicateBySlot(urls) {
 //                                 e.g. 75NANO80A6B_2010x1334_1.jpg
 //                 — Classic:      mediumNN.jpg
 //
-//   Washer / WashTower
-//                 — Numbered AEM: NN_WxH_MODEL.jpg  (UK 2024+)
-//                                 e.g. 01_2010x1334_WT1210WWF.jpg
-//                 — Descriptive:  ProductName_MODEL_View_Variant.jpg
-//                                 e.g. WashTower24_W4W8BVKKZHM_Front_LightOn.jpg
-//                 — Classic:      mediumNN.jpg
+//   Laundry (Washer-dryers, Washing machines, Tumble dryers, WashTowers)
+//
+//     Pattern A — NN_WxH_MODEL.jpg   (WashTower UK)
+//                 e.g. 01_2010x1334_WT1210WWF.jpg
+//
+//     Pattern D — NN_ProductName_..._ViewName.jpg   (Washer-dryers, Tumble dryers)
+//                 e.g. 01_Vivace_R500_10-6kg_MiddleBlack_F4Y5RRPYJY_UK_Front.jpg
+//                      07_Vivace_V500_9KG_MiddleBlack_Dryer_RH90V5MVTN_UK_LeftSide.jpg
+//                      11_Vivace_V500_9KG_MiddleBlack_Dryer_RH90V5MVTN_UK_Back.jpg
+//
+//     Pattern E — WxH_NN_ProductName_..._ViewName.jpg   (Washing machines UK 2024+)
+//                 e.g. 1600-1062_01_Vivace_R500N_11kg_White_F4Y5EYP6W_UK_Front.jpg
+//                      1600-1062_15_Vivace_R500N_11kg_White_F4Y5EYP6W_UK_Back.jpg
+//
+//     WashTower  — ProductName_MODEL_View_Variant.jpg
+//                 e.g. WashTower24_W4W8BVKKZHM_Front_LightOn.jpg
+//
+//     Classic    — mediumNN.jpg
 //
 //   Fridge        — Classic:      mediumNN.jpg  (most common)
 //                 — AEM flat:     MODEL_WxH_ViewName.jpg (newer)
@@ -1038,6 +1116,11 @@ function isSpecImage(url, productType = 'appliance') {
   if (/\/icon[s]?\/|\/badge[s]?\/|\/award[s]?\/|\/certif/i.test(u)) return true;
   if (/\/energy[-_]|\/rating[-_]|\/label[-_]/i.test(u)) return true;
 
+  // ── LG "DZ" dealer/detail-zoom spec graphics ─────────────────────
+  // e.g. DZ-06.jpg, DZ-07.jpg, DZ-13V.jpg — chip diagrams, remote shots, spec infographics.
+  // These appear in German/EU gallery paths but are NOT product packshots.
+  if (/^[Dd][Zz]-\d+[A-Za-z]*\./i.test(fname)) return true;
+
   // ── Fixed pixel-size video/UI crops ──────────────────────────────
   if (/[_-]1280x720[_.-]|[_-]800x450[_.-]|[_-]960x540[_.-]|[_-]1920x1080[_.-]/i.test(u)) return true;
 
@@ -1050,8 +1133,9 @@ function isSpecImage(url, productType = 'appliance') {
 
   // ── Washer-specific USP feature filenames ─────────────────────────
   if (/[-_](aidd|turbowash|steamgo|wideband|directdrive|energysaving|smartcontrol)/i.test(u)) return true;
-  // "01_Feature.jpg" style (NOT numbered gallery — those have digits after NN_)
-  if (/^(?:0[1-9]|[1-9]\d)_[a-z]/i.test(fname)) return true;
+  // "01_FeatureName_..." style — only reject known USP tech terms at slot position.
+  // (NOT "01_Vivace_..." product-name gallery images — those are Pattern D packshots.)
+  if (/^(?:0[1-9]|[1-9]\d)_(?:aidd|turbowash|steam(?:go)?|wideband|directdrive|energysaving|smartcontrol|inverter|thinq\b|wifi\b|6motion|ezload|easyload|door[-_]to[-_]door|direct[-_]drive)/i.test(fname)) return true;
 
   // ── Warranty / guarantee / award badges ───────────────────────────
   if (/warrant|guarant|certif|award|trophy|prize/i.test(fname)) return true;
@@ -1080,6 +1164,55 @@ function isSpecImage(url, productType = 'appliance') {
   const isNumberedGallery = /^\d{1,2}_\d{3,4}x\d{3,4}_/.test(fname);
   if (isNumberedGallery) return false;  // ✅ always packshot
 
+  // ── Shared packshot view matchers (used by Pattern D and E below) ────────────
+  // Positive list: view names that are clearly packshots.
+  //   Includes compound side names: LeftSide, RightSide, RightSideOpen.
+  const PACKSHOT_LAUNDRY = /^(?:front(?:open)?|(?:left|right)?side(?:open)?|back|rear|angle|corner|top(?:view)?$|bottom(?:view)?$|profile)/i;
+  // Negative list: words that mark a detail/feature shot even if a packshot keyword is in the name.
+  //   e.g. TopLeftPanel (top + panel), TopRightDrawerOpenDetail (top + drawer + detail)
+  const DETAIL_LAUNDRY   = /detail|panel|drum|drawer|interior|inside|hinge|knob|tub|controls?|display|sensor|perspective/i;
+
+  // Pattern D — Laundry descriptive gallery: NN_ProductName_..._ViewName.jpg
+  // Used by: Washer-dryers, Washing machines (some), Tumble dryers, WashTowers
+  // e.g. 01_Vivace_R500_10-6kg_MiddleBlack_F4Y5RRPYJY_UK_Front.jpg
+  //      02_Vivace_V500_9KG_MiddleBlack_Dryer_RH90V5MVTN_UK_FrontOpen.jpg
+  //      07_Vivace_V500_9KG_MiddleBlack_Dryer_RH90V5MVTN_UK_LeftSide.jpg
+  //      15_Vivace_R700_11-6kg_White_F4Y7ERPYH_UK_Back.jpg
+  // Detection: starts with NN_ followed by a letter (not digits×digits like Pattern A).
+  const descGalleryMatch = fname.match(/^(\d{1,2})_[A-Za-z].+_([A-Za-z][A-Za-z0-9]*)\.(?:jpe?g|png|webp)$/i);
+  if (descGalleryMatch) {
+    const viewName = descGalleryMatch[2].toLowerCase();
+    if (PACKSHOT_LAUNDRY.test(viewName) && !DETAIL_LAUNDRY.test(viewName)) return false;  // ✅ keep
+    return true;  // reject: Drum, Detail1/2/4, Panel, TopLeftPanel, Drawer, Perspective, etc.
+  }
+
+  // Pattern E — Washing Machine prefixed gallery: WxH_NN_ProductName_..._ViewName.jpg
+  // Used by: Washing machines (UK 2024+)
+  // e.g. 1600-1062_01_Vivace_R500N_11kg_White_F4Y5EYP6W_UK_Front.jpg
+  //      1600-1062_15_Vivace_R500N_11kg_White_F4Y5EYP6W_UK_Back.jpg
+  // Detection: WxH dimension prefix (NNN-NNN or NNNxNNN) followed by NN_ and a letter.
+  const prefixGalleryMatch = fname.match(/^\d{3,4}[-x]\d{3,4}_(\d{1,2})_[A-Za-z].+_([A-Za-z][A-Za-z0-9]*)\.(?:jpe?g|png|webp)$/i);
+  if (prefixGalleryMatch) {
+    const viewName = prefixGalleryMatch[2].toLowerCase();
+    if (PACKSHOT_LAUNDRY.test(viewName) && !DETAIL_LAUNDRY.test(viewName)) return false;  // ✅ keep
+    return true;  // reject: Drum, Detail, TopDrawerOpen, Topperspective, etc.
+  }
+
+  // Pattern W — WashTower ONLY: WashTowerNN_ModelCode_ViewName[_Variant].jpg
+  // e.g. WashTower24_W4W8BVKKZHM_Front_LightOn.jpg  → keep (front packshot)
+  //      WashTower24_W4W8BVKKZHM_FrontOpen.jpg       → keep
+  //      WashTower24_W4W8BVKKZHM_Back.jpg            → keep
+  //      WashTower24_W4W8BVKKZHM_Drum_Washer.jpg     → reject (detail)
+  //      WashTower24_W4W8BVKKZHM_Panel1_LightOff.jpg → reject (detail)
+  //      WashTower24_W4W8BVKKZHM_Drawer2.jpg         → reject (detail)
+  // NOTE: Only affects WashTower filenames — no other category uses this format.
+  const wtMatch = fname.match(/^WashTower\d*_[A-Za-z0-9]{4,}_([A-Za-z][A-Za-z0-9]*)(?:_[A-Za-z0-9]+)*\.(?:jpe?g|png|webp)$/i);
+  if (wtMatch) {
+    const viewName = wtMatch[1].toLowerCase();
+    if (/^(?:front|back|rear|side|angle)/i.test(viewName) && !DETAIL_LAUNDRY.test(viewName)) return false;  // ✅ keep packshot
+    return true;  // reject: Drum, Panel, Drawer, Tray, etc.
+  }
+
   // Patterns B & C — MODEL_WxH_Suffix.jpg
   const flatMatch = fname.match(/^[A-Za-z0-9]{4,}_\d{3,4}x\d{3,4}[_-](.+?)\.(?:jpe?g|png|webp)$/i);
   if (flatMatch) {
@@ -1100,24 +1233,19 @@ function isSpecImage(url, productType = 'appliance') {
       case 'monitor':
         // TV/Monitor — strict positive filter.
         // Reject everything that isn't a known packshot view or numbered slot.
-        // Non-packshot names: Lifestyle, Remote, Ports, Details, TECH, SPORT, MOVIE,
-        // content names, and tech feature identifiers (a7, gen, processor, nanocell,
-        // hdr, dolby, atmos, webos, ai, alpha, oled, qned, evo…).
         return true;
 
-      case 'washer':
-        // Washer/WashTower — MODEL_WxH_ViewName is uncommon; the primary format is NN_WxH_MODEL.
-        // When it does appear, reject known non-packshot washer names only.
+      case 'laundry':
+        // Laundry — MODEL_WxH_ViewName is uncommon for laundry; primary formats are D/E.
+        // When it does appear, reject known non-packshot names only.
         return /(?:lifestyle|campaign|feature|promo|poster|capacity|drum[-_]?tech|steam|turbowash|inverter|motor|ai[-_]?dd)/i.test(viewName);
 
       case 'fridge':
         // Fridge — Accept packshot views + close-up interior details that can be useful.
-        // Reject lifestyle/campaign/feature names.
         if (/^(?:door|panel|tray|shelf|bin|drawer|interior|inside|handle)/i.test(viewName)) return false;
         return /(?:lifestyle|campaign|feature|promo|poster|tech|spec)/i.test(viewName);
 
       default:
-        // Unknown/appliance — moderate: reject obvious non-packshot names only.
         return /(?:lifestyle|campaign|feature|promo|poster|tech[-_]spec|banner)/i.test(viewName);
     }
   }
@@ -1162,10 +1290,10 @@ function parseUrl(url) {
 
     const uLow = url.toLowerCase();
     const productType =
-      /refrigerat|fridge|freezer|lrmv|lfxs|gsxv|gsx|instaview/.test(uLow) ? 'fridge'   :
-      /washer|dryer|wm\d|dlex|dlgx|washtower|wash-tower/.test(uLow)        ? 'washer'   :
-      /monitor|ultrawide|34w|27u|32u/.test(uLow)                           ? 'monitor'  :
-      /oled|qned|nano|tv|65u|55u|75u|c3|c4|c5|g3|g4|g5/.test(uLow)       ? 'tv'       : 'appliance';
+      /refrigerat|fridge|freezer|lrmv|lfxs|gsxv|gsx|instaview/.test(uLow)              ? 'fridge'   :
+      /\/laundry\/|washing|tumble|washer|dryer|wm\d|dlex|dlgx|washtower|wash-tower/.test(uLow) ? 'laundry'  :
+      /monitor|ultrawide|34w|27u|32u/.test(uLow)                                        ? 'monitor'  :
+      /oled|qned|nano|tv|65u|55u|75u|c3|c4|c5|g3|g4|g5/.test(uLow)                    ? 'tv'       : 'appliance';
 
     const displayName = 'LG ' + modelRaw;
 
