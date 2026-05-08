@@ -740,13 +740,14 @@ async function visionScoreImages(candidates, productType, pageUrl = '') {
 function _visionPrompt(productType, urlList, context = '') {
   const typeGuide = {
     tv: [
-      'Full TV set with clearly visible rectangular frame/bezel AND stand on white or plain background = score 3',
-      'Full TV set visible from side, back, or at an angle on plain background — frame still visible = score 2',
+      'Full TV set clearly front-facing with rectangular frame/bezel AND stand on white or plain background = score 3',
+      'Full TV set at a slight angle (¾ view) on plain background, frame clearly visible = score 2',
       'TV frame/bezel visible but screen shows demo content (movie, game, nature scene) = score 2',
-      'Rectangular TV outline clearly recognisable even with a technology graphic partially overlaid = score 2',
-      'Technology feature graphic, processor/chip illustration, comparison diagram, or spec infographic (product frame absent or very small) = score 0',
+      'Back or side profile of TV body on plain background, no labels or icons overlaid = score 1',
+      'Back panel showing connectivity ports WITH icon labels/diagrams overlaid (Backports, HDMI, USB, Aerial layout) = score 0',
+      'Technology feature graphic, processor/chip illustration, comparison diagram, or spec infographic = score 0',
       'Screen-only content with NO visible TV frame, bezel, or stand = score 0',
-      'Remote control only (no TV body visible) = score 0',
+      'Remote control only, or accessory without TV body = score 0',
       'Large text or logo overlay dominating more than half the image = score 0',
     ],
     laundry: [
@@ -1203,7 +1204,12 @@ function isSpecImage(url, productType = 'appliance') {
   //                             → category-specific positive filter on ViewName
 
   // Pattern A — NN_WxH[_suffix].jpg numbered gallery.
-  // For TV/monitor: inspect the suffix — feature keywords → reject.
+  // For TV/monitor: ALLOWLIST approach — only accept known-safe suffixes.
+  //   Packshot suffixes: none (NN_WxH.jpg), view names (front/side/back/angle…),
+  //   or model/size codes (alphanumeric ≥3 chars WITH at least one digit, e.g. QNED86, 75B6A).
+  //   Everything else is a feature image and must be rejected.
+  //   This prevents unknown tech words (Backports, MagicRemote, Sport, Games, a8, webOS…)
+  //   from slipping through as the blocklist approach can never anticipate every new term.
   // For all other categories (washer, WashTower, etc.): always a packshot.
   const numGalleryMatch = fname.match(/^(\d{1,2})_\d{3,4}x\d{3,4}([_.].+)?\.(?:jpe?g|png|webp)$/i);
   if (numGalleryMatch) {
@@ -1212,12 +1218,15 @@ function isSpecImage(url, productType = 'appliance') {
       const suffix = suffixRaw.replace(/^[_.]/, '').toLowerCase();
       // No suffix → NN_WxH.jpg → always a clean packshot
       if (!suffix) return false;
-      // Known feature/tech keywords in suffix → reject
-      if (/webos|thinq|remote|sport|games?|gaming|\ba\d\b|evo\b|processor|wifi|hdr|dolby|hub|shield|dimming|amazon|netflix|prime/i.test(suffix)) return true;
-      // Multiple underscore segments → usually a tech descriptor (e.g. QNED_evo, Magic_Remote)
+      // Multiple segments with underscore → tech/feature descriptor (e.g. QNED_evo, Magic_Remote)
       if (suffix.includes('_')) return true;
-      // Single alphanumeric token that looks like a model code (all caps+digits, 4+ chars) → packshot
-      return false;
+      // Known packshot view name (exact match only) → keep
+      if (/^(?:front(?:open)?|side|back|rear|angle|corner|top|bottom|profile)$/.test(suffix)) return false;
+      // Model/size code: alphanumeric, 3–10 chars, MUST contain at least one digit (e.g. QNED86, 75B6A, C5ELA)
+      // Pure-letter words like "Sport", "Games", "Backports", "webOS" fail this and are rejected.
+      if (/^[a-z0-9]{3,10}$/.test(suffix) && /\d/.test(suffix)) return false;
+      // Everything else → feature image → reject
+      return true;
     }
     return false;  // ✅ always packshot for non-TV categories
   }
