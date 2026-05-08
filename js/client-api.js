@@ -588,6 +588,9 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
     // German / EU 2025 market: numbered gallery filenames contain "-gallery-NN."
     // e.g. oled-c5e-2025-83-gallery-01.jpg — CDN path uses model family not slug, but filename is reliable.
     if (/[_-]gallery[_-]\d+\./i.test(u)) return true;
+    // LG 2026 G-series packshots: MODEL-2010-NN.jpg (clean front/back/side shots numbered from 12+)
+    // e.g. OLED65G69LS-2010-12.jpg — 6+ alphanumeric model, 4-digit width, sequence number
+    if (/\/[A-Za-z0-9]{6,}-\d{4}-\d+\.(?:jpe?g|png|webp)$/i.test(u)) return true;
     // AEM descriptive naming: must ALSO contain the product slug to prevent
     // related-product images (from "You may also like" sections) slipping through.
     // e.g. /images/washtower/wt1210wwf/gallery/...  ← contains slug ✓
@@ -996,6 +999,16 @@ function slotIndex(url) {
     return 99;  // Drum, Panel, Drawer → slot 99 → dropped by deduplicateBySlot
   }
 
+  // ── Pattern F: MODEL-YYYY-NN.jpg (LG 2026 G-series packshots) ────
+  // e.g. OLED65G69LS-2010-12.jpg, OLED65G69LS-2010-13.jpg, OLED65G69LS-2010-14.jpg
+  // Packshots numbered from 12+ (after feature gallery images 1-11).
+  // Remap: NN > 10 → NN - 10 to bring into valid slot range (12→2, 13→3, 14→4).
+  const modelYearSeq = filename.match(/^[A-Za-z0-9]{6,}-\d{4}-(\d+)\.(?:jpe?g|png|webp)$/i);
+  if (modelYearSeq) {
+    const nn = parseInt(modelYearSeq[1], 10);
+    return nn > 10 ? nn - 10 : nn;  // 12→2, 13→3, 14→4 (slot 1 stays with gallery-01)
+  }
+
   // ── AEM flat format: MODEL_WxH_Suffix.jpg ────────────────────────
   // Two sub-types:
   //   B) MODEL_WxH_N.jpg        e.g. 75NANO80A6B_2010x1334_1.jpg  → slot N
@@ -1211,6 +1224,22 @@ function isSpecImage(url, productType = 'appliance') {
     const viewName = wtMatch[1].toLowerCase();
     if (/^(?:front|back|rear|side|angle)/i.test(viewName) && !DETAIL_LAUNDRY.test(viewName)) return false;  // ✅ keep packshot
     return true;  // reject: Drum, Panel, Drawer, Tray, etc.
+  }
+
+  // TV-specific: DE/EU 2025-2026 descriptive gallery filenames
+  // Format: [prefix]-gallery-NN-description.jpg
+  // gallery-01 with packshot keywords in description → keep; all others → reject as feature images.
+  // e.g. lg-oled-evo-g6-2026-65-gallery-01-product-front-usp.jpg → keep (front packshot)
+  //      lg-oled-evo-g6-2026-65-gallery-03-hyper-radiant-color-tech.jpg → reject (feature)
+  //      lg-oled-evo-g6-2026-65-gallery-07-ai-processor.jpg → reject (feature)
+  if ((productType === 'tv' || productType === 'monitor')) {
+    const deGallery = fname.match(/[_-]gallery[_-](\d+)[_-](.+)\.(?:jpe?g|png|webp)$/i);
+    if (deGallery) {
+      const desc = deGallery[2].toLowerCase();
+      // Keep only if description starts with a clear packshot/product keyword
+      if (/^(?:product|front|back|side|angle|rear|corner)/i.test(desc)) return false;  // ✅ packshot
+      return true;  // reject: tech/feature descriptions (color-tech, brightness, processor, gaming…)
+    }
   }
 
   // Patterns B & C — MODEL_WxH_Suffix.jpg
