@@ -593,6 +593,12 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
     // LG 2026 G-series packshots: MODEL-2010-NN.jpg (clean front/back/side shots numbered from 12+)
     // e.g. OLED65G69LS-2010-12.jpg — 6+ alphanumeric model, 4-digit width, sequence number
     if (/\/[A-Za-z0-9]{6,}-\d{4}-\d+\.(?:jpe?g|png|webp)$/i.test(u)) return true;
+    // JCR rendition URLs (LG 2026 UK): original.jpg/jcr:content/renditions/thum-*.jpeg
+    // The URL contains /gallery/ and ends in /jcr:content/renditions/...
+    // Slug-match to avoid cross-product pollution.
+    if (/\/jcr:content\/renditions\//i.test(u) && /\/gallery\//i.test(u)) {
+      return !!(slugCore && ul.includes(slugCore));
+    }
     // AEM descriptive naming: must ALSO contain the product slug to prevent
     // related-product images (from "You may also like" sections) slipping through.
     // e.g. /images/washtower/wt1210wwf/gallery/...  ← contains slug ✓
@@ -734,9 +740,14 @@ async function visionScoreImages(candidates, productType, pageUrl = '') {
 function _visionPrompt(productType, urlList, context = '') {
   const typeGuide = {
     tv: [
-      'TV frame/bezel/stand clearly visible = score 2–3 even with demo content on screen',
-      'ONLY screen content with no visible frame/bezel = score 0',
-      'Large text/logo overlay ("LG QNED evo AI / 2025") covering most of image = score 0',
+      'Full TV set with clearly visible rectangular frame/bezel AND stand on white or plain background = score 3',
+      'Full TV set visible from side, back, or at an angle on plain background — frame still visible = score 2',
+      'TV frame/bezel visible but screen shows demo content (movie, game, nature scene) = score 2',
+      'Rectangular TV outline clearly recognisable even with a technology graphic partially overlaid = score 2',
+      'Technology feature graphic, processor/chip illustration, comparison diagram, or spec infographic (product frame absent or very small) = score 0',
+      'Screen-only content with NO visible TV frame, bezel, or stand = score 0',
+      'Remote control only (no TV body visible) = score 0',
+      'Large text or logo overlay dominating more than half the image = score 0',
     ],
     laundry: [
       'Front-facing or 3/4 packshot on white/light gray background = score 3',
@@ -937,15 +948,21 @@ function deduplicateByFilename(urls) {
 // Extract a "slot number" from a URL (1 = first product shot, 99 = unknown/non-gallery)
 // LG CDN convention: medium01 / _AEK_1 / _1 → slot 1; D01 → dimension (99)
 function slotIndex(url) {
-  const filename = url.split('/').pop().split('?')[0];
+  // Handle JCR rendition paths: /original.jpg/jcr:content/renditions/thum-1600x1062.jpeg
+  // The real filename for pattern detection is the segment BEFORE /jcr:content/.
+  // e.g. .../75qned87b6a/01_2010x1334.jpg/jcr:content/... → filename = 01_2010x1334.jpg
+  const jcrRaw = url.match(/\/([^/]+\.(?:jpe?g|png|webp))\/jcr:content\//i);
+  const filename = jcrRaw ? jcrRaw[1] : url.split('/').pop().split('?')[0];
+
   // D01.jpg, D02.jpg etc. → dimension images, never show
   if (/^[Dd]\d+\./i.test(filename)) return 99;
 
-  // ── Numbered AEM gallery: NN_WxH_MODEL.jpg → slot NN ────────────
-  // e.g. 01_2010x1334_WT1210WWF.jpg → slot 1
-  //      12_1044x1334_WT1210WWF.jpg → slot 12 (> 10 → skipped by deduplicateBySlot)
+  // ── Numbered AEM gallery: NN_WxH[_.]...jpg → slot NN ────────────
+  // Matches both suffix and no-suffix variants:
+  //   NN_WxH_MODEL.jpg  e.g. 01_2010x1334_WT1210WWF.jpg  → slot 1
+  //   NN_WxH.jpg        e.g. 01_2010x1334.jpg             → slot 1 (UK 2026 QNED/OLED)
   // Must check BEFORE Pattern D to avoid misidentifying.
-  const aemNumGallery = filename.match(/^(\d{1,2})_\d{3,4}x\d{3,4}_/i);
+  const aemNumGallery = filename.match(/^(\d{1,2})_\d{3,4}x\d{3,4}[_.]/i);
   if (aemNumGallery) return parseInt(aemNumGallery[1], 10);
 
   // ── Pattern D: NN_ProductName_..._ViewName.jpg → slot by view name ──────────
@@ -1119,7 +1136,10 @@ function deduplicateBySlot(urls) {
 // Called BEFORE vision scoring. Returns true = reject this image.
 function isSpecImage(url, productType = 'appliance') {
   const u = url.toLowerCase();
-  const fname = u.split('/').pop().split('?')[0];
+  // JCR rendition URLs: real filename is the segment BEFORE /jcr:content/
+  // e.g. .../01_2010x1334.jpg/jcr:content/renditions/thum-1600x1062.jpeg → 01_2010x1334.jpg
+  const jcrRaw = url.match(/\/([^/]+\.(?:jpe?g|png|webp))\/jcr:content\//i);
+  const fname = (jcrRaw ? jcrRaw[1] : url.split('/').pop().split('?')[0]).toLowerCase();
 
   // ══ COMMON FILTERS (all categories) ══════════════════════════════
 
@@ -1182,9 +1202,25 @@ function isSpecImage(url, productType = 'appliance') {
   //                             e.g. 43NANO906AB_2010x1334-Front.jpg
   //                             → category-specific positive filter on ViewName
 
-  // Pattern A — Washer/WashTower numbered (NN_WxH_MODEL): always packshot.
-  const isNumberedGallery = /^\d{1,2}_\d{3,4}x\d{3,4}_/.test(fname);
-  if (isNumberedGallery) return false;  // ✅ always packshot
+  // Pattern A — NN_WxH[_suffix].jpg numbered gallery.
+  // For TV/monitor: inspect the suffix — feature keywords → reject.
+  // For all other categories (washer, WashTower, etc.): always a packshot.
+  const numGalleryMatch = fname.match(/^(\d{1,2})_\d{3,4}x\d{3,4}([_.].+)?\.(?:jpe?g|png|webp)$/i);
+  if (numGalleryMatch) {
+    if (productType === 'tv' || productType === 'monitor') {
+      const suffixRaw = numGalleryMatch[2] || '';
+      const suffix = suffixRaw.replace(/^[_.]/, '').toLowerCase();
+      // No suffix → NN_WxH.jpg → always a clean packshot
+      if (!suffix) return false;
+      // Known feature/tech keywords in suffix → reject
+      if (/webos|thinq|remote|sport|games?|gaming|\ba\d\b|evo\b|processor|wifi|hdr|dolby|hub|shield|dimming|amazon|netflix|prime/i.test(suffix)) return true;
+      // Multiple underscore segments → usually a tech descriptor (e.g. QNED_evo, Magic_Remote)
+      if (suffix.includes('_')) return true;
+      // Single alphanumeric token that looks like a model code (all caps+digits, 4+ chars) → packshot
+      return false;
+    }
+    return false;  // ✅ always packshot for non-TV categories
+  }
 
   // ── Shared packshot view matchers (used by Pattern D and E below) ────────────
   // Positive list: view names that are clearly packshots.
