@@ -585,9 +585,11 @@ async function buildResult(imgSet, cdnImgs, productName, productType, productFea
     const ul = u.toLowerCase();
     // Classic medium01.jpg / large01.jpg naming — slug is already in the CDN path, no extra check needed
     if (/\/gallery\/(?:medium|large)\d+\./i.test(u)) return true;
-    // German / EU 2025 market: numbered gallery filenames contain "-gallery-NN."
-    // e.g. oled-c5e-2025-83-gallery-01.jpg — CDN path uses model family not slug, but filename is reliable.
-    if (/[_-]gallery[_-]\d+\./i.test(u)) return true;
+    // German / EU 2025-2026 market: numbered gallery filenames contain "-gallery-NN" (plain or with description).
+    // e.g. oled-c5e-2025-83-gallery-01.jpg                     (C5, C5E — ends right after number)
+    //      lg-oled-evo-g6-2026-65-gallery-01-product-front.jpg  (G6 — description follows number)
+    // Match both: just require "-gallery-NN" anywhere in the URL (no trailing dot required).
+    if (/[_-]gallery[_-]\d+(?:[_-]|\.)/i.test(u)) return true;
     // LG 2026 G-series packshots: MODEL-2010-NN.jpg (clean front/back/side shots numbered from 12+)
     // e.g. OLED65G69LS-2010-12.jpg — 6+ alphanumeric model, 4-digit width, sequence number
     if (/\/[A-Za-z0-9]{6,}-\d{4}-\d+\.(?:jpe?g|png|webp)$/i.test(u)) return true;
@@ -998,6 +1000,13 @@ function slotIndex(url) {
     if (/^angle/.test(v))           return 5;
     return 99;  // Drum, Panel, Drawer → slot 99 → dropped by deduplicateBySlot
   }
+
+  // ── Pattern G: DE/EU descriptive gallery — [prefix]-gallery-NN-description.jpg ──
+  // e.g. lg-oled-evo-g6-2026-65-gallery-01-product-front-usp.jpg → slot 1
+  //      lg-oled-evo-g6-2026-65-gallery-03-hyper-radiant-color-tech.jpg → slot 3
+  // (isSpecImage rejects feature descriptions before they reach here, so only packshots survive)
+  const deGallerySlot = filename.match(/[_-]gallery[_-](\d+)[_-]/i);
+  if (deGallerySlot) return parseInt(deGallerySlot[1], 10);
 
   // ── Pattern F: MODEL-YYYY-NN.jpg (LG 2026 G-series packshots) ────
   // e.g. OLED65G69LS-2010-12.jpg, OLED65G69LS-2010-13.jpg, OLED65G69LS-2010-14.jpg
