@@ -333,6 +333,10 @@ async function extractGalleryUrls(url, info) {
   const galleryUrls = [...found].filter(imgUrl).filter(u => {
     const ul = u.toLowerCase();
     if (/\/gallery\/medium\d+\./i.test(u)) return !slugCoreH || ul.includes(slugCoreH);
+    // JCR rendition gallery URLs (UK 2026 OLED/QNED): /gallery/…/file.jpg/jcr:content/renditions/
+    // These lack "/images/" in the path so the AEM check below won't catch them.
+    if (/\/jcr:content\/renditions\//i.test(u) && /\/gallery\//i.test(u))
+      return !!(slugCoreH && ul.includes(slugCoreH));
     if (/\/content\/dam\/channel\/wcms\/[^/]+\/images\/.+\/gallery\//i.test(u))
       return slugCoreH && ul.includes(slugCoreH);
     if (/gscs-b2c\.lge\.com\/lglib\/goldimage\//i.test(u))
@@ -1036,6 +1040,15 @@ function slotIndex(url) {
     return nn > 10 ? nn - 10 : nn;  // 12→2, 13→3, 14→4 (slot 1 stays with gallery-01)
   }
 
+  // ── Pattern UK-TV: MODEL_N_[Desc_]WxH[_suffix].jpg — UK 2026 OLED/QNED ─────
+  // e.g. OLED65C64LA_1_Front_2010x1334.jpg  → slot 1
+  //      OLED65C64LA_5_2010x1334_PB.jpg      → slot 5
+  //      75QNED87B6A_5_Backports_2010x1334.jpg → slot 5 (rejected by isSpecImage anyway)
+  // Key: slot N (1-2 digits) comes right after the model code.
+  // Distinct from Pattern B/C (MODEL_WxH_…) because WxH is 3-4 digits while N is 1-2.
+  const ukTvSlot = filename.match(/^[A-Za-z0-9]{4,}_(\d{1,2})_/i);
+  if (ukTvSlot) return parseInt(ukTvSlot[1], 10);
+
   // ── AEM flat format: MODEL_WxH_Suffix.jpg ────────────────────────
   // Two sub-types:
   //   B) MODEL_WxH_N.jpg        e.g. 75NANO80A6B_2010x1334_1.jpg  → slot N
@@ -1185,8 +1198,10 @@ function isSpecImage(url, productType = 'appliance') {
   if (/[_-](\d+)year[_-]?(?:parts?|labour|guarantee|warranty)/i.test(fname)) return true;
   if (/5yr|10yr|\d+yr[-_]/i.test(fname)) return true;
 
-  // ── d2c-content dimension / installation add-N images ─────────────
-  if (/[-_]add[-_](?:4|5)\b/i.test(fname)) return true;
+  // ── d2c-content supplementary add-N images ────────────────────────
+  // Covers all slots: add-1…add-6 are spec sheets, lifestyle, or installation drawings.
+  // The main packshot is always captured by Pattern W / D / E / A / UK-TV before this.
+  if (/[-_]add[-_]\d+\b/i.test(fname)) return true;
 
   // ══ CATEGORY-SPECIFIC AEM FLAT FILENAME ANALYSIS ═════════════════
   //
@@ -1229,6 +1244,28 @@ function isSpecImage(url, productType = 'appliance') {
       return true;
     }
     return false;  // ✅ always packshot for non-TV categories
+  }
+
+  // Pattern UK-TV — MODEL_N_[Description_]WxH[_suffix].jpg  (UK 2026 OLED/QNED local-image gallery)
+  // The model code comes first, then a 1–2 digit slot number, then optional desc before WxH.
+  // e.g. OLED65C64LA_1_Front_2010x1334.jpg         → keep (front packshot)
+  //      OLED65C64LA_3_Dimensions_2010x1334.jpg     → reject (spec drawing)
+  //      OLED65C64LA_15_Backports_2010x1334.jpg     → reject (port connectivity diagram)
+  //      OLED65C64LA_5_2010x1334_PB.jpg             → keep (plain-bg packshot)
+  //      OLED65C64LA_7_2010x1334_a11.jpg            → reject (chip image)
+  //      75QNED87B6A_5_Backports_2010x1334.jpg      → reject (port diagram)
+  // Allowlist logic: only accept if pre-WxH description is a packshot view name (or absent);
+  // reject all other description words and known feature suffixes.
+  const ukTvMatch = fname.match(/^[A-Za-z0-9]{4,}_(\d{1,2})_(?:([A-Za-z][A-Za-z0-9]*)_)?(\d{3,4}x\d{3,4})(?:_(.+?))?\.(?:jpe?g|png|webp)$/i);
+  if (ukTvMatch && (productType === 'tv' || productType === 'monitor')) {
+    const preDesc = (ukTvMatch[2] || '').toLowerCase();
+    const suffix  = (ukTvMatch[4] || '').toLowerCase();
+    // Pre-WxH description present → must be a known packshot view name, or reject
+    if (preDesc && !/^(?:front(?:open)?|side|back|rear|angle|corner|profile|design)$/.test(preDesc)) return true;
+    // Post-WxH suffix → apply same allowlist rules as Pattern A
+    if (suffix.includes('_')) return true;   // multi-segment = feature descriptor
+    if (/webos|thinq|remote|sport|games?|gaming|\ba\d+\b|evo\b|processor|wifi|hdr|dolby|hub|movies?|lifestyle|highlights?/i.test(suffix)) return true;
+    return false;  // ✅ packshot
   }
 
   // ── Shared packshot view matchers (used by Pattern D and E below) ────────────
